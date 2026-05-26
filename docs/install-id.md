@@ -15,10 +15,10 @@ The returned value is a canonical lowercase RFC 4122 UUID matching `^[0-9a-f]{8}
 
 ## Storage
 
-- Path: `<config-root>/install-id` — i.e. `~/.omp/install-id` by default, respecting `PI_CONFIG_DIR` via `getConfigRootDir()`.
+- Path: `<config-root>/install-id` — i.e. `~/.gjc/install-id` by default, respecting `GJC_CONFIG_DIR` via `getConfigRootDir()`.
 - Format: a single UUID line (trailing `\n`).
 - Permissions: file is created with mode `0o600`.
-- Lifecycle: independent of `~/.omp/agent/`. Wiping agent state (sessions, settings, DB) does NOT regenerate the install ID; only deleting the `install-id` file itself does.
+- Lifecycle: independent of `~/.gjc/agent/`. Wiping agent state (sessions, settings, DB) does NOT regenerate the install ID; only deleting the `install-id` file itself does.
 
 ## Generation and lifecycle
 
@@ -31,11 +31,11 @@ The returned value is a canonical lowercase RFC 4122 UUID matching `^[0-9a-f]{8}
 
 ## Consumers
 
-- `packages/coding-agent/src/tools/report-tool-issue.ts` — included as `installId` in the auto-QA grievance push body so the backend can deduplicate repeated reports from the same install. See `dev.autoqaPush.*` settings and `PI_AUTO_QA_PUSH_*` env vars.
+- `packages/coding-agent/src/tools/report-tool-issue.ts` — included as `installId` in the auto-QA grievance push body so the backend can deduplicate repeated reports from the same install. See `dev.autoqaPush.*` settings and `GJC_AUTO_QA_PUSH_*` env vars.
 
 New consumers MUST treat the value as opaque and MUST NOT derive PII from it; the helper does not mix in hostname, username, or any other host-identifying entropy.
 
 ## See also
 
-- [environment-variables.md](environment-variables.md) — `PI_CONFIG_DIR` controls where `install-id` lives.
+- [environment-variables.md](environment-variables.md) — `GJC_CONFIG_DIR` controls where `install-id` lives.
 - [config-usage.md](config-usage.md) — broader config-root layout.

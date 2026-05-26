@@ -49,7 +49,7 @@ Shared AST pattern grammar and language catalog: see [`ast_grep`](./ast-grep.md#
    - at least one op is required,
    - duplicate `pat` values fail,
    - ops are converted to a `Record<pattern, replacement>`.
-2. The wrapper reads `PI_MAX_AST_FILES` via `$envpos(..., 1000)` and uses that as the native `maxFiles` cap for both preview and apply.
+2. The wrapper reads `GJC_MAX_AST_FILES` via `$envpos(..., 1000)` and uses that as the native `maxFiles` cap for both preview and apply.
 3. Path normalization, internal URL handling, missing-path partitioning, and multi-path resolution follow the same `path-utils.ts` flow as `ast_grep`.
 4. The wrapper stats the resolved base path to decide whether to render grouped directory output.
 5. `runAstEditOnce(...)` always runs native `astEdit(...)` with `dryRun: true` and `failOnParseError: false` on the first pass.
@@ -89,7 +89,7 @@ Shared AST pattern grammar and language catalog: see [`ast_grep`](./ast-grep.md#
   - Cancellation and optional native timeout are cooperative through `CancelToken::heartbeat()`.
 
 ## Limits & Caps
-- File cap exposed by the wrapper: `PI_MAX_AST_FILES`, default `1000`, in `packages/coding-agent/src/tools/ast-edit.ts`.
+- File cap exposed by the wrapper: `GJC_MAX_AST_FILES`, default `1000`, in `packages/coding-agent/src/tools/ast-edit.ts`.
 - Native `maxFiles` and `maxReplacements` are both clamped to at least `1` when provided in `crates/pi-natives/src/ast.rs`.
 - The wrapper never sets `maxReplacements`; native behavior therefore defaults to effectively unbounded replacements for a run.
 - Parse issues are rendered with at most `PARSE_ERRORS_LIMIT = 20` lines in `packages/coding-agent/src/tools/render-utils.ts`; `details.parseErrors` is deduplicated but not capped.

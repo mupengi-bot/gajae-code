@@ -2,8 +2,8 @@
 
 The auth broker and auth gateway are two cooperating HTTP services that move OAuth refresh tokens and provider access tokens off developer laptops and into a single broker host.
 
-- **`omp auth-broker serve`** holds the canonical SQLite credential vault, performs OAuth refreshes, and exposes a small REST API (`/v1/snapshot`, `/v1/credential/:id/refresh`, `/v1/credential/:id/disable`, `/v1/credential`, `/v1/usage`, `/v1/healthz`).
-- **`omp auth-gateway serve`** is a forward-proxy. It accepts OpenAI Chat Completions, Anthropic Messages, and OpenAI Responses requests, injects the broker-resolved access token, and forwards the bytes to the real provider. Clients (containerised omp, llm-git, the macOS usage widget, …) never see the access token.
+- **`gjc auth-broker serve`** holds the canonical SQLite credential vault, performs OAuth refreshes, and exposes a small REST API (`/v1/snapshot`, `/v1/credential/:id/refresh`, `/v1/credential/:id/disable`, `/v1/credential`, `/v1/usage`, `/v1/healthz`).
+- **`gjc auth-gateway serve`** is a forward-proxy. It accepts OpenAI Chat Completions, Anthropic Messages, and OpenAI Responses requests, injects the broker-resolved access token, and forwards the bytes to the real provider. Clients (containerised gjc, llm-git, the macOS usage widget, …) never see the access token.
 
 Transport security between operator, broker, and gateway is delegated to the operator (Tailscale / Wireguard / reverse proxy + TLS). Every endpoint except `/v1/healthz` (broker) and `/healthz` (gateway) requires a bearer token.
 
@@ -16,7 +16,7 @@ Source: `packages/ai/src/auth-broker/`, `packages/ai/src/auth-gateway/`, `packag
                 │ broker host                                                │
                 │                                                            │
   developer ──▶ │  ┌──────────────────────────┐    ┌────────────────────┐    │
-  laptop /      │  │  omp auth-broker serve   │◀──▶│  SQLite agent.db    │    │
+  laptop /      │  │  gjc auth-broker serve   │◀──▶│  SQLite agent.db    │    │
   CI / robogjc   │  │  - holds refresh tokens  │    │  (canonical writer)│    │
                 │  │  - background refresher  │    └────────────────────┘    │
                 │  │  /v1/{snapshot,refresh,…}│                              │
@@ -24,7 +24,7 @@ Source: `packages/ai/src/auth-broker/`, `packages/ai/src/auth-gateway/`, `packag
                 │            │  bearer ($CONFIG_DIR/auth-broker.token)       │
                 │            ▼                                               │
                 │  ┌──────────────────────────┐                              │
-                │  │  omp auth-gateway serve  │  RemoteAuthCredentialStore   │
+                │  │  gjc auth-gateway serve  │  RemoteAuthCredentialStore   │
                 │  │  /v1/{chat,messages,…}   │  pulls /v1/snapshot at boot, │
                 │  │  /v1/usage, /v1/models   │  refreshes credentials by id │
                 │  └─────────┬────────────────┘  via the broker on expiry    │
@@ -38,27 +38,27 @@ Source: `packages/ai/src/auth-broker/`, `packages/ai/src/auth-gateway/`, `packag
                   api.anthropic.com / api.openai.com / …
 ```
 
-The broker is the only writer of OAuth refresh tokens. Clients (including the gateway itself) load a redacted snapshot in which every `refresh` field has been replaced with `REMOTE_REFRESH_SENTINEL`; when an access token expires the client calls `POST /v1/credential/:id/refresh` and the broker performs the refresh server-side. `RemoteAuthCredentialStore` rejects any local code path that tries to write through it, with an error pointing at `omp auth-broker login` / `omp auth-broker logout`.
+The broker is the only writer of OAuth refresh tokens. Clients (including the gateway itself) load a redacted snapshot in which every `refresh` field has been replaced with `REMOTE_REFRESH_SENTINEL`; when an access token expires the client calls `POST /v1/credential/:id/refresh` and the broker performs the refresh server-side. `RemoteAuthCredentialStore` rejects any local code path that tries to write through it, with an error pointing at `gjc auth-broker login` / `gjc auth-broker logout`.
 
 ## auth-broker
 
 ### CLI
 
 ```
-omp auth-broker serve     [--bind=host:port]                    # boot the broker
-omp auth-broker token     [--regenerate] [--json]               # print or rotate the bearer token
-omp auth-broker login     <provider> [--via=user@host] [--dry-run]
-omp auth-broker logout    <provider>
-omp auth-broker import    <file|dir> [--provider=<id>] [--include-disabled] [--dry-run] [--json]
-omp auth-broker migrate   --from-local [--dry-run] [--json]
-omp auth-broker status    [--json]
+gjc auth-broker serve     [--bind=host:port]                    # boot the broker
+gjc auth-broker token     [--regenerate] [--json]               # print or rotate the bearer token
+gjc auth-broker login     <provider> [--via=user@host] [--dry-run]
+gjc auth-broker logout    <provider>
+gjc auth-broker import    <file|dir> [--provider=<id>] [--include-disabled] [--dry-run] [--json]
+gjc auth-broker migrate   --from-local [--dry-run] [--json]
+gjc auth-broker status    [--json]
 ```
 
 - `serve` opens the local SQLite store at `getAgentDbPath()` and binds an HTTP listener (default `127.0.0.1:8765`). On startup a token is ensured at `<config-dir>/auth-broker.token` (mode `0600`, `0700` parent dir). The background refresher refreshes any OAuth credential whose `expires - Date.now() < refreshSkewMs` (default 5 min) every `refreshIntervalMs` (default 60 s).
 - `token` prints the cached bearer or generates a new one. `--regenerate` rotates it.
-- `login <provider>` runs the per-provider OAuth flow locally, or — with `--via=user@host` — `ssh -L <callback-port>:127.0.0.1:<callback-port> user@host omp auth-broker login <provider>` so the OAuth callback hits the local browser but the credential is written on the broker host. Built-in callback ports: `anthropic:54545`, `openai-codex:1455`, `google-gemini-cli:8085`, `google-antigravity:51121`, `gitlab-duo:8080`.
+- `login <provider>` runs the per-provider OAuth flow locally, or — with `--via=user@host` — `ssh -L <callback-port>:127.0.0.1:<callback-port> user@host gjc auth-broker login <provider>` so the OAuth callback hits the local browser but the credential is written on the broker host. Built-in callback ports: `anthropic:54545`, `openai-codex:1455`, `google-gemini-cli:8085`, `google-antigravity:51121`, `gitlab-duo:8080`.
 - `logout <provider>` deletes every credential row for `<provider>`.
-- `import <file|dir>` imports CLIProxyAPI-style JSON credentials into the local SQLite store. Maps `type` field → omp provider (`claude → anthropic`, `codex → openai-codex`, `gemini → google-gemini-cli`, `antigravity → google-antigravity`, `gemini-cli → google-gemini-cli`).
+- `import <file|dir>` imports CLIProxyAPI-style JSON credentials into the local SQLite store. Maps `type` field → gjc provider (`claude → anthropic`, `codex → openai-codex`, `gemini → google-gemini-cli`, `antigravity → google-antigravity`, `gemini-cli → google-gemini-cli`).
 - `migrate --from-local` walks the local SQLite store + env-derived credentials and idempotently uploads them to the configured broker (`POST /v1/credential`).
 - `status` health-pings the configured remote broker.
 
@@ -87,9 +87,9 @@ Requests use `Authorization: Bearer <token>`. The server compares against an in-
 ### CLI
 
 ```
-omp auth-gateway serve   [--bind=host:port] [--no-auth]
-omp auth-gateway token   [--regenerate] [--json]
-omp auth-gateway status  [--json]
+gjc auth-gateway serve   [--bind=host:port] [--no-auth]
+gjc auth-gateway token   [--regenerate] [--json]
+gjc auth-gateway status  [--json]
 ```
 
 - `serve` requires `GJC_AUTH_BROKER_URL` (or `auth.broker.url` in `config.yml`) — the gateway is itself a broker client. It calls `AuthBrokerClient.fetchSnapshot()`, wraps it in `RemoteAuthCredentialStore`, and constructs an `AuthStorage` that resolves access tokens through the broker. Default bind is `127.0.0.1:4000`. The gateway token is stored at `<config-dir>/auth-gateway.token` (`0600`); `--no-auth` disables the bearer check entirely (loopback-only use).
@@ -109,7 +109,7 @@ omp auth-gateway status  [--json]
 The model id is read from the top-level `model` field. The gateway picks the first bundled `Model<Api>` matching that id and:
 
 - **Passthrough fast-path** — when the inbound wire format matches the model’s native API (`openai-chat → openai-completions`, `anthropic-messages → anthropic-messages`, `openai-responses → openai-responses`), the request body is forwarded byte-for-byte with the client `Authorization`/`x-api-key` stripped and replaced by `Authorization: Bearer <resolved-access-token>`. Provider-specific fields (`cache_control`, `service_tier`, tool-choice extensions, …) flow through unmodified. Hop-by-hop headers (RFC 7230) plus `Content-Encoding`/`Content-Length` are stripped from the upstream response.
-- **Translate path** — when the inbound format and the resolved model’s API differ (e.g. `/v1/chat/completions` targeting an Anthropic model, or `/v1/responses` targeting `openai-codex-responses` which runs over a websocket transport), the request is parsed against the wire schema, rebuilt into an omp `Context`, dispatched through `streamSimple()`, and re-encoded back to the inbound format (SSE for streamed responses).
+- **Translate path** — when the inbound format and the resolved model’s API differ (e.g. `/v1/chat/completions` targeting an Anthropic model, or `/v1/responses` targeting `openai-codex-responses` which runs over a websocket transport), the request is parsed against the wire schema, rebuilt into an gjc `Context`, dispatched through `streamSimple()`, and re-encoded back to the inbound format (SSE for streamed responses).
 
 `idleTimeout` on the underlying `Bun.serve` is set to `255 s` so long thinking-budget calls do not get killed by Bun’s default idle timeout.
 
@@ -141,7 +141,7 @@ The broker is **off** unless `GJC_AUTH_BROKER_URL` (or `auth.broker.url` in `con
 
 | Variable | Purpose | Required when |
 | -------- | ------- | ------------- |
-| `GJC_AUTH_BROKER_URL`   | Base URL of the remote auth-broker (e.g. `https://broker.tailnet:8765`). Selecting this puts the client in broker mode — local SQLite is bypassed. | Any time the omp client should resolve credentials through a broker (and required by `omp auth-gateway serve`). |
+| `GJC_AUTH_BROKER_URL`   | Base URL of the remote auth-broker (e.g. `https://broker.tailnet:8765`). Selecting this puts the client in broker mode — local SQLite is bypassed. | Any time the gjc client should resolve credentials through a broker (and required by `gjc auth-gateway serve`). |
 | `GJC_AUTH_BROKER_TOKEN` | Bearer token used for every broker endpoint except `/v1/healthz`. | When `GJC_AUTH_BROKER_URL` is set and no token is available from `auth.broker.token` or `<config-dir>/auth-broker.token`. |
 
 Resolution order in `resolveAuthBrokerConfig()`:
@@ -163,10 +163,10 @@ The gateway has no dedicated env vars — it inherits `GJC_AUTH_BROKER_*` becaus
 
 | Path | Owner | Mode |
 | ---- | ----- | ---- |
-| `<config-dir>/auth-broker.token`  | `omp auth-broker serve` (created at first start) | `0600` in a `0700` parent dir |
-| `<config-dir>/auth-gateway.token` | `omp auth-gateway serve` (skipped under `--no-auth`) | `0600` in a `0700` parent dir |
+| `<config-dir>/auth-broker.token`  | `gjc auth-broker serve` (created at first start) | `0600` in a `0700` parent dir |
+| `<config-dir>/auth-gateway.token` | `gjc auth-gateway serve` (skipped under `--no-auth`) | `0600` in a `0700` parent dir |
 
-`<config-dir>` resolves to `~/.omp/` (respecting `PI_CONFIG_DIR`).
+`<config-dir>` resolves to `~/.gjc/` (respecting `GJC_CONFIG_DIR`).
 
 ## Interaction with the local API-key resolution order
 

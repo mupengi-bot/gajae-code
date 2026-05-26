@@ -4,7 +4,7 @@
 
 ## Enable it
 
-Disabled by default. Turn it on in `/settings` under **Tools → Render Mermaid**, or in `~/.omp/agent/config.yml`:
+Disabled by default. Turn it on in `/settings` under **Tools → Render Mermaid**, or in `~/.gjc/agent/config.yml`:
 
 ```yaml
 renderMermaid:

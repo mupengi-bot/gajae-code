@@ -14,15 +14,15 @@ Source of truth in code:
 
 GJC can discover MCP servers from multiple tools (`.claude/`, `.cursor/`, `.vscode/`, `opencode.json`, and more), but for GJC-native configuration you should usually use one of these files:
 
-- Project: `.omp/mcp.json`
-- User: `~/.omp/agent/mcp.json`
+- Project: `.gjc/mcp.json`
+- User: `~/.gjc/agent/mcp.json`
 
 GJC also accepts fallback standalone files in the project root:
 
 - `mcp.json`
 - `.mcp.json`
 
-Use `.omp/mcp.json` or `~/.omp/agent/mcp.json` when you want GJC to own the configuration. Use root `mcp.json` / `.mcp.json` only when you want a portable fallback file that other MCP clients may also read.
+Use `.gjc/mcp.json` or `~/.gjc/agent/mcp.json` when you want GJC to own the configuration. Use root `mcp.json` / `.mcp.json` only when you want a portable fallback file that other MCP clients may also read.
 
 ## Add a schema reference
 
@@ -59,7 +59,7 @@ Top-level keys:
 
 - `$schema` — optional JSON Schema URL for tooling
 - `mcpServers` — map of server name to server config
-- `disabledServers` — user-level denylist used to turn off discovered servers by name; runtime loading reads this list from `~/.omp/agent/mcp.json`
+- `disabledServers` — user-level denylist used to turn off discovered servers by name; runtime loading reads this list from `~/.gjc/agent/mcp.json`
 
 Server names must match `^[a-zA-Z0-9_.-]{1,100}$`.
 
@@ -315,7 +315,7 @@ This matches GitHub's official local Docker image `ghcr.io/github/github-mcp-ser
 
 This is the part that usually trips people up.
 
-### In `.omp/mcp.json` and `~/.omp/agent/mcp.json`
+### In `.gjc/mcp.json` and `~/.gjc/agent/mcp.json`
 
 Before GJC launches a stdio server or makes an HTTP/SSE request, it resolves stdio `env` values and HTTP/SSE `headers` values like this:
 
@@ -363,11 +363,11 @@ Example:
 }
 ```
 
-If you want the least surprising GJC behavior, prefer `.omp/mcp.json` or `~/.omp/agent/mcp.json` and use explicit env/header values.
+If you want the least surprising GJC behavior, prefer `.gjc/mcp.json` or `~/.gjc/agent/mcp.json` and use explicit env/header values.
 
 ## `disabledServers`
 
-`disabledServers` is read from the user config file (`~/.omp/agent/mcp.json`) when a server is discovered from any source and you want GJC to ignore it without editing that other tool's config.
+`disabledServers` is read from the user config file (`~/.gjc/agent/mcp.json`) when a server is discovered from any source and you want GJC to ignore it without editing that other tool's config.
 
 Example:
 
@@ -413,11 +413,11 @@ Practical implications:
 
 ## Discovery and precedence
 
-GJC does not merge duplicate server definitions across files. Discovery providers are prioritized, and the higher-priority definition wins. Separately, `disabledServers` from `~/.omp/agent/mcp.json` can suppress a discovered server by name.
+GJC does not merge duplicate server definitions across files. Discovery providers are prioritized, and the higher-priority definition wins. Separately, `disabledServers` from `~/.gjc/agent/mcp.json` can suppress a discovered server by name.
 
 In practice:
 
-- prefer `.omp/mcp.json` or `~/.omp/agent/mcp.json` when you want an GJC-specific override
+- prefer `.gjc/mcp.json` or `~/.gjc/agent/mcp.json` when you want an GJC-specific override
 - keep server names unique across tools when possible
 - use `disabledServers` in the user config when a third-party config keeps reintroducing a server you do not want
 

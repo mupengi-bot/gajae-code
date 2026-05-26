@@ -230,7 +230,7 @@ A single tool call can mix Python and JS cells. Persistence is per language runt
 - `EvalTool.customFormat` no longer exists. Tool calls flow through the standard JSON schema; there is no Lark-constrained sampling path.
 - `tool.<name>()` exists only in JS. Python prelude helpers do not call back into the full tool registry.
 - JS helper paths reject protocol URIs (`://`) in `resolvePath()`; the JS prelude is filesystem-only unless the code calls `tool.read(...)` or another tool explicitly.
-- Python helper `output(...)` depends on `PI_SESSION_FILE`; it fails outside a session-backed run.
+- Python helper `output(...)` depends on `GJC_SESSION_FILE`; it fails outside a session-backed run.
 - `display()` can produce text and structured outputs from the same value; the renderer prefers markdown over `text/plain` when both exist.
 - JS static imports are rewritten only at top level. Nested imports stay invalid and surface normal JS syntax/runtime errors.
 - `EvalTool` is `concurrency = "exclusive"`, so eval calls do not overlap within a session.

@@ -16,7 +16,7 @@ Primary implementation files:
 
 Default config path:
 
-- `~/.omp/agent/models.yml`
+- `~/.gjc/agent/models.yml`
 
 Legacy behavior still present:
 
@@ -605,7 +605,7 @@ providers:
 
 ## Legacy consumer caveat
 
-Most model configuration now flows through `models.yml` via `ModelRegistry`. Explicit `.json` / `.jsonc` paths remain supported only when passed programmatically to `ModelRegistry`; the default user config is `~/.omp/agent/models.yml`.
+Most model configuration now flows through `models.yml` via `ModelRegistry`. Explicit `.json` / `.jsonc` paths remain supported only when passed programmatically to `ModelRegistry`; the default user config is `~/.gjc/agent/models.yml`.
 
 ## Failure mode
 

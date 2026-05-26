@@ -1,6 +1,6 @@
 # Plugin manager and installer plumbing
 
-This document describes how `omp plugin` operations mutate plugin state on disk and how installed plugins become runtime capabilities (tools and extensions today, hooks/commands path resolution available).
+This document describes how `gjc plugin` operations mutate plugin state on disk and how installed plugins become runtime capabilities (tools and extensions today, hooks/commands path resolution available).
 
 ## Scope and architecture
 
@@ -9,18 +9,18 @@ There are two plugin-management implementations in the codebase:
 1. **Active path used by CLI commands**: `PluginManager` (`src/extensibility/plugins/manager.ts`)
 2. **Legacy helper module**: installer functions (`src/extensibility/plugins/installer.ts`)
 
-`omp plugin ...` command execution goes through `PluginManager`.
+`gjc plugin ...` command execution goes through `PluginManager`.
 
 `installer.ts` still documents important safety checks and filesystem behavior, but it is not the path used by `src/commands/plugin.ts` + `src/cli/plugin-cli.ts`.
 
 ## Lifecycle: from CLI invocation to runtime availability
 
 ```text
-omp plugin <action> ...
+gjc plugin <action> ...
   -> src/commands/plugin.ts
   -> runPluginCommand(...) in src/cli/plugin-cli.ts
   -> PluginManager method (install/list/uninstall/link/...)
-  -> mutate ~/.omp/plugins/{package.json,node_modules,omp-plugins.lock.json}
+  -> mutate ~/.gjc/plugins/{package.json,node_modules,omp-plugins.lock.json}
   -> runtime discovery: discoverAndLoadCustomTools(...) and discoverAndLoadExtensions(...)
   -> getAllPluginToolPaths(cwd) / getAllPluginExtensionPaths(cwd)
   -> custom tool loader imports tool modules; extension loader imports extension modules
@@ -35,7 +35,7 @@ omp plugin <action> ...
 
 ## On-disk model
 
-Global plugin state lives under `~/.omp/plugins`:
+Global plugin state lives under `~/.gjc/plugins`:
 
 - `package.json` — dependency manifest used by `bun install`/`bun uninstall`
 - `node_modules/` — installed plugin packages or symlinks
@@ -46,7 +46,7 @@ Global plugin state lives under `~/.omp/plugins`:
 
 Project-local overrides live at:
 
-- `<cwd>/.omp/plugin-overrides.json`
+- `<cwd>/.gjc/plugin-overrides.json`
 
 Overrides are read-only from manager/loader perspective (no write path here) and can disable plugins or override features/settings for this project.
 
@@ -68,15 +68,15 @@ Overrides are read-only from manager/loader perspective (no write path here) and
 
 Manifest is resolved as:
 
-1. `package.json.omp`
+1. `package.json.gjc`
 2. fallback `package.json.pi`
 3. fallback `{ version: package.version }`
 
 Implications:
 
 - There is no strict schema validation in manager/loader.
-- A package missing `omp`/`pi` is still installable and listable.
-- Runtime plugin loading (`getEnabledPlugins`) skips packages without `omp`/`pi` manifest.
+- A package missing `gjc`/`pi` is still installable and listable.
+- Runtime plugin loading (`getEnabledPlugins`) skips packages without `gjc`/`pi` manifest.
 - `manifest.version` is always overwritten from package `version`.
 
 Malformed `package.json` JSON is a hard failure at read time; malformed manifest shape may fail later only when specific fields are consumed.
@@ -86,7 +86,7 @@ Malformed `package.json` JSON is a hard failure at read time; malformed manifest
 1. Parse feature bracket syntax from install spec.
 2. Validate package name against regex + shell-metacharacter denylist.
 3. Ensure plugin `package.json` exists (`omp-plugins`, private dependencies map).
-4. Run `bun install <packageSpec>` in `~/.omp/plugins`.
+4. Run `bun install <packageSpec>` in `~/.gjc/plugins`.
 5. Read installed package `node_modules/<name>/package.json`.
 6. Resolve manifest and compute `enabledFeatures`:
    - `[*]`: all declared features (or `null` if no feature map)
@@ -99,7 +99,7 @@ Malformed `package.json` JSON is a hard failure at read time; malformed manifest
 
 Because update is install-driven:
 
-- `omp plugin install pkg@newVersion` updates dependency and lockfile version.
+- `gjc plugin install pkg@newVersion` updates dependency and lockfile version.
 - Existing settings are preserved; state entry is overwritten for version/features/enabled.
 - No separate “check updates” or transactional migration logic exists.
 
@@ -115,9 +115,9 @@ If uninstall command fails, runtime state is not changed.
 
 ## List flow (`PluginManager.list`)
 
-1. Read plugin dependency map from `~/.omp/plugins/package.json`.
+1. Read plugin dependency map from `~/.gjc/plugins/package.json`.
 2. Load lockfile runtime config (missing file -> empty defaults).
-3. Load project overrides (`<cwd>/.omp/plugin-overrides.json`, parse/read errors -> empty object with warning).
+3. Load project overrides (`<cwd>/.gjc/plugin-overrides.json`, parse/read errors -> empty object with warning).
 4. For each dependency with a resolvable package.json:
    - build `InstalledPlugin` record
    - merge feature/enable state:
@@ -129,7 +129,7 @@ This is the effective state used by CLI status output and settings/features oper
 
 ## Link flow (`PluginManager.link`)
 
-`link` supports local plugin development by symlinking a local package into `~/.omp/plugins/node_modules/<pkg.name>`.
+`link` supports local plugin development by symlinking a local package into `~/.gjc/plugins/node_modules/<pkg.name>`.
 
 Behavior:
 
@@ -156,7 +156,7 @@ Caveat: current `PluginManager.link` does not enforce the `cwd` path-boundary ch
 Filtering:
 
 - skip if no plugin package.json
-- skip if manifest (`omp`/`pi`) absent
+- skip if manifest (`gjc`/`pi`) absent
 - skip if globally disabled in lockfile
 - skip if project-disabled
 
@@ -240,7 +240,7 @@ Operationally, `doctor --fix` can repair some drift (`bun install`, orphaned con
 
 ## Malformed/missing manifest behavior summary
 
-- Missing `omp`/`pi` field:
+- Missing `gjc`/`pi` field:
   - install/list: tolerated (minimal manifest)
   - runtime enabled-plugin discovery: skipped as non-plugin
 - Missing feature referenced by install spec or `features --set/--enable`: hard error with available feature list

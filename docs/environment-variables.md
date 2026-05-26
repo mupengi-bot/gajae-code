@@ -16,11 +16,11 @@ Most runtime lookups use `$env` from `@gajae-code/utils` (`packages/utils/src/en
 
 1. Existing process environment (`Bun.env`)
 2. Project `.env` (`$PWD/.env`) for keys not already set
-3. Agent `.env` (`~/.omp/agent/.env`, respecting `PI_CONFIG_DIR` / `PI_CODING_AGENT_DIR`) for keys not already set
-4. Config-root `.env` (`~/.omp/.env`, respecting `PI_CONFIG_DIR`) for keys not already set
+3. Agent `.env` (`~/.gjc/agent/.env`, respecting `GJC_CONFIG_DIR` / `GJC_CODING_AGENT_DIR`) for keys not already set
+4. Config-root `.env` (`~/.gjc/.env`, respecting `GJC_CONFIG_DIR`) for keys not already set
 5. Home `.env` (`~/.env`) for keys not already set
 
-Additional rule inside each `.env` file: `GJC_*` keys are mirrored to `PI_*` keys in that parsed file.
+Additional rule inside each `.env` file: `GJC_*` keys are mirrored to `GJC_*` keys in that parsed file.
 
 ---
 
@@ -90,10 +90,10 @@ When the broker is enabled, the local SQLite credential store is bypassed and al
 
 | Variable                | Used for                                                                                          | Required when                                                                                                          | Notes / precedence                                                                                                                                                                                  |
 | ----------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GJC_AUTH_BROKER_URL`   | Base URL of the remote auth-broker (e.g. `https://broker.tailnet:8765`); selects broker mode      | Resolving credentials through a broker; also required by `omp auth-gateway serve` (the gateway is itself a broker client) | Wins over `auth.broker.url` in `config.yml`. When set with no resolvable token, `resolveAuthBrokerConfig()` hard-errors instead of falling back to local SQLite.                                    |
-| `GJC_AUTH_BROKER_TOKEN` | Bearer token sent on every broker endpoint except `/v1/healthz`                                   | `GJC_AUTH_BROKER_URL` is set and no token is available from `auth.broker.token` or `<config-dir>/auth-broker.token`     | Resolution: this env → `auth.broker.token` (`$ENV_NAME` indirection supported) → `<config-dir>/auth-broker.token` (mode `0600`). `<config-dir>` is `~/.omp/` (respecting `PI_CONFIG_DIR`).         |
+| `GJC_AUTH_BROKER_URL`   | Base URL of the remote auth-broker (e.g. `https://broker.tailnet:8765`); selects broker mode      | Resolving credentials through a broker; also required by `gjc auth-gateway serve` (the gateway is itself a broker client) | Wins over `auth.broker.url` in `config.yml`. When set with no resolvable token, `resolveAuthBrokerConfig()` hard-errors instead of falling back to local SQLite.                                    |
+| `GJC_AUTH_BROKER_TOKEN` | Bearer token sent on every broker endpoint except `/v1/healthz`                                   | `GJC_AUTH_BROKER_URL` is set and no token is available from `auth.broker.token` or `<config-dir>/auth-broker.token`     | Resolution: this env → `auth.broker.token` (`$ENV_NAME` indirection supported) → `<config-dir>/auth-broker.token` (mode `0600`). `<config-dir>` is `~/.gjc/` (respecting `GJC_CONFIG_DIR`).         |
 
-The gateway has no dedicated env vars — it inherits `GJC_AUTH_BROKER_*`. Its own inbound bearer token lives at `<config-dir>/auth-gateway.token` and is managed via `omp auth-gateway token`.
+The gateway has no dedicated env vars — it inherits `GJC_AUTH_BROKER_*`. Its own inbound bearer token lives at `<config-dir>/auth-gateway.token` and is managed via `gjc auth-gateway token`.
 
 ---
 
@@ -178,19 +178,19 @@ OAuth host chain: `KIMI_CODE_OAUTH_HOST` → `KIMI_OAUTH_HOST` → `https://auth
 
 | Variable                   | Default / behavior                                              |
 | -------------------------- | --------------------------------------------------------------- |
-| `PI_AI_GEMINI_CLI_VERSION` | Overrides Gemini CLI user-agent version tag (`0.35.3` if unset) |
+| `GJC_AI_GEMINI_CLI_VERSION` | Overrides Gemini CLI user-agent version tag (`0.35.3` if unset) |
 
 ### OpenAI Codex responses (feature/debug controls)
 
 | Variable                             | Behavior                                             |
 | ------------------------------------ | ---------------------------------------------------- |
-| `PI_CODEX_DEBUG`                     | `1`/`true` enables Codex provider debug logging      |
-| `PI_CODEX_WEBSOCKET`                 | `1`/`true` enables websocket transport preference    |
-| `PI_CODEX_WEBSOCKET_V2`              | `1`/`true` enables websocket v2 path                 |
-| `PI_CODEX_WEBSOCKET_IDLE_TIMEOUT_MS` | Positive integer override (default 300000)           |
-| `PI_CODEX_WEBSOCKET_RETRY_BUDGET`    | Non-negative integer override (default 5)            |
-| `PI_CODEX_WEBSOCKET_RETRY_DELAY_MS`  | Positive integer base backoff override (default 500) |
-| `PI_OPENAI_STREAM_IDLE_TIMEOUT_MS`   | Positive integer OpenAI stream idle timeout override |
+| `GJC_CODEX_DEBUG`                     | `1`/`true` enables Codex provider debug logging      |
+| `GJC_CODEX_WEBSOCKET`                 | `1`/`true` enables websocket transport preference    |
+| `GJC_CODEX_WEBSOCKET_V2`              | `1`/`true` enables websocket v2 path                 |
+| `GJC_CODEX_WEBSOCKET_IDLE_TIMEOUT_MS` | Positive integer override (default 300000)           |
+| `GJC_CODEX_WEBSOCKET_RETRY_BUDGET`    | Non-negative integer override (default 5)            |
+| `GJC_CODEX_WEBSOCKET_RETRY_DELAY_MS`  | Positive integer base backoff override (default 500) |
+| `GJC_OPENAI_STREAM_IDLE_TIMEOUT_MS`   | Positive integer OpenAI stream idle timeout override |
 
 ### Cursor provider debug
 
@@ -203,7 +203,7 @@ OAuth host chain: `KIMI_CODE_OAUTH_HOST` → `KIMI_OAUTH_HOST` → `https://auth
 
 | Variable             | Behavior                                                                                                          |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `PI_CACHE_RETENTION` | If `long`, enables long retention where supported (`anthropic`, `openai-responses`, Bedrock retention resolution) |
+| `GJC_CACHE_RETENTION` | If `long`, enables long retention where supported (`anthropic`, `openai-responses`, Bedrock retention resolution) |
 
 ---
 
@@ -220,7 +220,7 @@ OAuth host chain: `KIMI_CODE_OAUTH_HOST` → `KIMI_OAUTH_HOST` → `https://auth
 | `TAVILY_API_KEY`                                    | Tavily search provider                                        |
 | `ZAI_API_KEY`                                       | z.ai search provider (also checks stored OAuth in `agent.db`) |
 | `OPENAI_API_KEY` / Codex OAuth in DB                | Codex search provider availability/auth                       |
-| `PI_CODEX_WEB_SEARCH_MODEL`                         | Codex search provider model override                          |
+| `GJC_CODEX_WEB_SEARCH_MODEL`                         | Codex search provider model override                          |
 | `MOONSHOT_SEARCH_API_KEY` / `KIMI_SEARCH_API_KEY`   | Kimi/Moonshot search provider env auth                        |
 | `MOONSHOT_SEARCH_BASE_URL` / `KIMI_SEARCH_BASE_URL` | Kimi/Moonshot search endpoint override                        |
 | `KAGI_API_KEY`                                      | Kagi search provider                                          |
@@ -229,7 +229,7 @@ OAuth host chain: `KIMI_CODE_OAUTH_HOST` → `KIMI_OAUTH_HOST` → `https://auth
 | `SEARXNG_ENDPOINT`, `SEARXNG_TOKEN`                 | SearXNG endpoint and optional bearer token                    |
 | `SEARXNG_BASIC_USERNAME`, `SEARXNG_BASIC_PASSWORD`  | SearXNG HTTP Basic Auth credentials                           |
 
-SearXNG also reads the equivalent `searxng.endpoint`, `searxng.token`, `searxng.basicUsername`, and `searxng.basicPassword` settings from `~/.omp/agent/config.yml`; environment variables are fallbacks.
+SearXNG also reads the equivalent `searxng.endpoint`, `searxng.token`, `searxng.basicUsername`, and `searxng.basicPassword` settings from `~/.gjc/agent/config.yml`; environment variables are fallbacks.
 
 ### Anthropic web search auth chain
 
@@ -254,7 +254,7 @@ Related vars:
 
 | Variable            | Behavior                                                                        |
 | ------------------- | ------------------------------------------------------------------------------- |
-| `PI_AUTH_NO_BORROW` | If set, disables macOS native-app token borrowing path in Perplexity login flow |
+| `GJC_AUTH_NO_BORROW` | If set, disables macOS native-app token borrowing path in Perplexity login flow |
 
 ---
 
@@ -262,16 +262,16 @@ Related vars:
 
 | Variable                  | Default / behavior                                                                                                  |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `PI_PY`                   | Eval backend override: `0`/`bash`=JavaScript only, `1`/`py`=Python only, `mix`/`both`=both; invalid values ignored |
-| `PI_PYTHON_SKIP_CHECK`    | If `1`, skips Python interpreter availability checks (subprocess runner still starts on demand)                     |
-| `PI_PYTHON_INTEGRATION`   | If `1`, opts gated integration tests in (e.g. `python-runner.integration.test.ts`) into running against real Python |
-| `PI_PYTHON_IPC_TRACE`     | If `1`, logs NDJSON frames exchanged with the Python runner subprocess                                              |
+| `GJC_PY`                   | Eval backend override: `0`/`bash`=JavaScript only, `1`/`py`=Python only, `mix`/`both`=both; invalid values ignored |
+| `GJC_PYTHON_SKIP_CHECK`    | If `1`, skips Python interpreter availability checks (subprocess runner still starts on demand)                     |
+| `GJC_PYTHON_INTEGRATION`   | If `1`, opts gated integration tests in (e.g. `python-runner.integration.test.ts`) into running against real Python |
+| `GJC_PYTHON_IPC_TRACE`     | If `1`, logs NDJSON frames exchanged with the Python runner subprocess                                              |
 | `VIRTUAL_ENV`             | Highest-priority venv path for Python runtime resolution                                                            |
 
 Extra conditional behavior:
 
 - If `BUN_ENV=test` or `NODE_ENV=test`, Python availability checks are treated as OK and warming is skipped.
-- Python env filtering denies common API keys and allows safe base vars + `LC_`, `XDG_`, `PI_` prefixes.
+- Python env filtering denies common API keys and allows safe base vars + `LC_`, `XDG_`, `GJC_` prefixes.
 
 ---
 
@@ -279,31 +279,31 @@ Extra conditional behavior:
 
 | Variable                     | Default / behavior                                                                                 |
 | ---------------------------- | -------------------------------------------------------------------------------------------------- |
-| `PI_SMOL_MODEL`              | Ephemeral model-role override for `smol` (CLI `--smol` takes precedence)                           |
-| `PI_SLOW_MODEL`              | Ephemeral model-role override for `slow` (CLI `--slow` takes precedence)                           |
-| `PI_PLAN_MODEL`              | Ephemeral model-role override for `plan` (CLI `--plan` takes precedence)                           |
-| `PI_NO_TITLE`                | If set (any non-empty value), disables auto session title generation on first user message         |
+| `GJC_SMOL_MODEL`              | Ephemeral model-role override for `smol` (CLI `--smol` takes precedence)                           |
+| `GJC_SLOW_MODEL`              | Ephemeral model-role override for `slow` (CLI `--slow` takes precedence)                           |
+| `GJC_PLAN_MODEL`              | Ephemeral model-role override for `plan` (CLI `--plan` takes precedence)                           |
+| `GJC_NO_TITLE`                | If set (any non-empty value), disables auto session title generation on first user message         |
 | `NULL_PRGJCT`                | If `true`, system prompt builder returns empty string                                              |
-| `PI_BLOCKED_AGENT`           | Blocks a specific subagent type in task tool                                                       |
-| `PI_SUBPROCESS_CMD`          | Overrides subagent spawn command (`omp` / `omp.cmd` resolution bypass)                             |
-| `PI_TASK_MAX_OUTPUT_BYTES`   | Max captured output bytes per subagent (default `500000`)                                          |
-| `PI_TASK_MAX_OUTPUT_LINES`   | Max captured output lines per subagent (default `5000`)                                            |
-| `PI_TIMING`                  | If set (any non-empty value), prints a hierarchical timing-span tree to **stderr** via `logger.printTimings()`. In interactive mode the tree prints once the agent is ready (before the TUI starts); in print mode it prints after the whole prompt batch completes. Print-mode prompts are wrapped in `print:prompt:initial` / `print:prompt:next` spans so each user message shows up as its own row. `PI_TIMING=x` exits the process with code 0 right after printing in interactive mode (use to measure cold startup only). `PI_TIMING=full` lists every module-load entry instead of just the top N. |
-| `PI_PACKAGE_DIR`             | Overrides package asset base dir resolution (docs/examples/changelog path lookup)                  |
-| `PI_DISABLE_LSPMUX`          | If `1`, disables lspmux detection/integration and forces direct LSP server spawning                |
-| `PI_RPC_EMIT_TITLE`          | Boolean-like flag enabling title events in RPC mode                                                |
+| `GJC_BLOCKED_AGENT`           | Blocks a specific subagent type in task tool                                                       |
+| `GJC_SUBPROCESS_CMD`          | Overrides subagent spawn command (`gjc` / `omp.cmd` resolution bypass)                             |
+| `GJC_TASK_MAX_OUTPUT_BYTES`   | Max captured output bytes per subagent (default `500000`)                                          |
+| `GJC_TASK_MAX_OUTPUT_LINES`   | Max captured output lines per subagent (default `5000`)                                            |
+| `GJC_TIMING`                  | If set (any non-empty value), prints a hierarchical timing-span tree to **stderr** via `logger.printTimings()`. In interactive mode the tree prints once the agent is ready (before the TUI starts); in print mode it prints after the whole prompt batch completes. Print-mode prompts are wrapped in `print:prompt:initial` / `print:prompt:next` spans so each user message shows up as its own row. `GJC_TIMING=x` exits the process with code 0 right after printing in interactive mode (use to measure cold startup only). `GJC_TIMING=full` lists every module-load entry instead of just the top N. |
+| `GJC_PACKAGE_DIR`             | Overrides package asset base dir resolution (docs/examples/changelog path lookup)                  |
+| `GJC_DISABLE_LSPMUX`          | If `1`, disables lspmux detection/integration and forces direct LSP server spawning                |
+| `GJC_RPC_EMIT_TITLE`          | Boolean-like flag enabling title events in RPC mode                                                |
 | `SMITHERY_URL`               | Smithery web URL override (default `https://smithery.ai`)                                          |
 | `SMITHERY_API_URL`           | Smithery API base URL override (default `https://api.smithery.ai`)                                 |
 | `PUPPETEER_EXECUTABLE_PATH`  | Browser tool Chromium executable override                                                          |
 | `LM_STUDIO_BASE_URL`         | Default implicit LM Studio discovery base URL override (`http://127.0.0.1:1234/v1` if unset)       |
 | `OLLAMA_BASE_URL`            | Default implicit Ollama discovery base URL override (`http://127.0.0.1:11434` if unset)            |
 | `LLAMA_CPP_BASE_URL`         | Default implicit Llama.cpp discovery base URL override (`http://127.0.0.1:8080` if unset)          |
-| `PI_EDIT_VARIANT`            | Forces edit tool variant when valid (`patch`, `replace`, `hashline`, `atom`, `vim`, `apply_patch`) |
-| `PI_FORCE_IMAGE_PROTOCOL`    | Forces supported image protocol (`kitty`, `iterm2`/`iterm`, `sixel`, `none`) where used            |
-| `PI_ALLOW_SIXEL_PASSTHROUGH` | Allows SIXEL passthrough when `PI_FORCE_IMAGE_PROTOCOL=sixel`                                      |
-| `PI_NO_PTY`                  | If `1`, disables interactive PTY path for bash tool                                                |
+| `GJC_EDIT_VARIANT`            | Forces edit tool variant when valid (`patch`, `replace`, `hashline`, `atom`, `vim`, `apply_patch`) |
+| `GJC_FORCE_IMAGE_PROTOCOL`    | Forces supported image protocol (`kitty`, `iterm2`/`iterm`, `sixel`, `none`) where used            |
+| `GJC_ALLOW_SIXEL_PASSTHROUGH` | Allows SIXEL passthrough when `GJC_FORCE_IMAGE_PROTOCOL=sixel`                                      |
+| `GJC_NO_PTY`                  | If `1`, disables interactive PTY path for bash tool                                                |
 
-`PI_NO_PTY` is also set internally when CLI `--no-pty` is used.
+`GJC_NO_PTY` is also set internally when CLI `--no-pty` is used.
 
 ---
 
@@ -313,8 +313,8 @@ These are consumed via `@gajae-code/utils/dirs` and affect where coding-agent st
 
 | Variable              | Default / behavior                                                            |
 | --------------------- | ----------------------------------------------------------------------------- |
-| `PI_CONFIG_DIR`       | Config root dirname under home (default `.omp`)                               |
-| `PI_CODING_AGENT_DIR` | Full override for agent directory (default `~/<PI_CONFIG_DIR or .omp>/agent`) |
+| `GJC_CONFIG_DIR`       | Config root dirname under home (default `.gjc`)                               |
+| `GJC_CODING_AGENT_DIR` | Full override for agent directory (default `~/<GJC_CONFIG_DIR or .gjc>/agent`) |
 | `PWD`                 | Used when matching canonical current working directory in path helpers        |
 
 ---
@@ -325,16 +325,16 @@ These are consumed via `@gajae-code/utils/dirs` and affect where coding-agent st
 
 | Variable                   | Behavior                                                                       |
 | -------------------------- | ------------------------------------------------------------------------------ |
-| `PI_BASH_NO_CI`            | Suppresses automatic `CI=true` injection into spawned shell env                |
-| `CLAUDE_BASH_NO_CI`        | Legacy alias fallback for `PI_BASH_NO_CI`                                      |
-| `PI_BASH_NO_LOGIN`         | Disables login-shell mode; shell args become `['-c']` instead of `['-l','-c']` |
-| `CLAUDE_BASH_NO_LOGIN`     | Legacy alias fallback for `PI_BASH_NO_LOGIN`                                   |
-| `PI_SHELL_PREFIX`          | Optional command prefix wrapper                                                |
-| `CLAUDE_CODE_SHELL_PREFIX` | Legacy alias fallback for `PI_SHELL_PREFIX`                                    |
+| `GJC_BASH_NO_CI`            | Suppresses automatic `CI=true` injection into spawned shell env                |
+| `CLAUDE_BASH_NO_CI`        | Legacy alias fallback for `GJC_BASH_NO_CI`                                      |
+| `GJC_BASH_NO_LOGIN`         | Disables login-shell mode; shell args become `['-c']` instead of `['-l','-c']` |
+| `CLAUDE_BASH_NO_LOGIN`     | Legacy alias fallback for `GJC_BASH_NO_LOGIN`                                   |
+| `GJC_SHELL_PREFIX`          | Optional command prefix wrapper                                                |
+| `CLAUDE_CODE_SHELL_PREFIX` | Legacy alias fallback for `GJC_SHELL_PREFIX`                                    |
 | `VISUAL`                   | Preferred external editor command                                              |
 | `EDITOR`                   | Fallback external editor command                                               |
 
-Current implementation: `PI_BASH_NO_LOGIN`/`CLAUDE_BASH_NO_LOGIN` are active; when either is set, `getShellArgs()` returns `['-c']`.
+Current implementation: `GJC_BASH_NO_LOGIN`/`CLAUDE_BASH_NO_LOGIN` are active; when either is set, `getShellArgs()` returns `['-c']`.
 
 ---
 
@@ -359,13 +359,13 @@ These are read as runtime signals; they are usually set by the terminal/OS rathe
 
 | Variable                  | Behavior                                                                              |
 | ------------------------- | ------------------------------------------------------------------------------------- |
-| `PI_NOTIFICATIONS`        | `off` / `0` / `false` suppress desktop notifications                                  |
-| `PI_TUI_WRITE_LOG`        | If set, logs TUI writes to file                                                       |
-| `PI_HARDWARE_CURSOR`      | If `1`, enables hardware cursor mode                                                  |
-| `PI_CLEAR_ON_SHRINK`      | If `1`, clears empty rows when content shrinks                                        |
-| `PI_DEBUG_REDRAW`         | If `1`, enables redraw debug logging                                                  |
-| `PI_TUI_DEBUG`            | If `1`, enables deep TUI debug dump path                                              |
-| `PI_FORCE_IMAGE_PROTOCOL` | Forces terminal image protocol detection (`kitty`, `iterm2`/`iterm`, `sixel`, `none`) |
+| `GJC_NOTIFICATIONS`        | `off` / `0` / `false` suppress desktop notifications                                  |
+| `GJC_TUI_WRITE_LOG`        | If set, logs TUI writes to file                                                       |
+| `GJC_HARDWARE_CURSOR`      | If `1`, enables hardware cursor mode                                                  |
+| `GJC_CLEAR_ON_SHRINK`      | If `1`, clears empty rows when content shrinks                                        |
+| `GJC_DEBUG_REDRAW`         | If `1`, enables redraw debug logging                                                  |
+| `GJC_TUI_DEBUG`            | If `1`, enables deep TUI debug dump path                                              |
+| `GJC_FORCE_IMAGE_PROTOCOL` | Forces terminal image protocol detection (`kitty`, `iterm2`/`iterm`, `sixel`, `none`) |
 
 ---
 
@@ -373,9 +373,9 @@ These are read as runtime signals; they are usually set by the terminal/OS rathe
 
 | Variable                  | Behavior                                                            |
 | ------------------------- | ------------------------------------------------------------------- |
-| `PI_COMMIT_TEST_FALLBACK` | If `true` (case-insensitive), force commit fallback generation path |
-| `PI_COMMIT_NO_FALLBACK`   | If `true`, disables fallback when agent returns no proposal         |
-| `PI_COMMIT_MAP_REDUCE`    | If `false`, disables map-reduce commit analysis path                |
+| `GJC_COMMIT_TEST_FALLBACK` | If `true` (case-insensitive), force commit fallback generation path |
+| `GJC_COMMIT_NO_FALLBACK`   | If `true`, disables fallback when agent returns no proposal         |
+| `GJC_COMMIT_MAP_REDUCE`    | If `false`, disables map-reduce commit analysis path                |
 | `DEBUG`                   | If set, commit agent error stack traces are printed                 |
 
 ---

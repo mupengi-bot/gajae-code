@@ -19,7 +19,7 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-That is a working extension. Drop it into `~/.omp/agent/extensions/hello.ts` and restart omp to see the notification.
+That is a working extension. Drop it into `~/.omp/agent/extensions/hello.ts` and restart gjc to see the notification.
 
 ## Full example
 
@@ -75,7 +75,7 @@ export default function myExtension(pi: ExtensionAPI) {
 
 ## Discovery path
 
-omp discovers extension modules in this order:
+gjc discovers extension modules in this order:
 
 1. **Project-scoped auto-discovery** — `<cwd>/.omp/extensions/`
 2. **User-scoped auto-discovery** — `~/.omp/agent/extensions/`
@@ -215,10 +215,10 @@ Extensions are a strict superset of hooks. New authoring should use `ExtensionAP
 
 ## Debugging
 
-Start omp with `--log-level debug` to see extension load messages:
+Start gjc with `--log-level debug` to see extension load messages:
 
 ```
-omp --log-level debug
+gjc --log-level debug
 ```
 
 Watch for lines like:

@@ -90,7 +90,7 @@ Artifacts and side channels:
    - each job body calls `#executeSync(...)` with a one-task batch and the preallocated id
    - `onUpdate(...)` emits aggregate `progress` snapshots and `details.async`
 5. Sync path (`#executeSync(...)`) rediscovers agents from disk via `discoverAgents(...)`, so runtime resolution can differ from the earlier prompt description.
-6. It resolves the requested agent with `getAgent(...)`, rejects unknown or disabled agents, and enforces parent spawn policy plus `PI_BLOCKED_AGENT` self-recursion prevention.
+6. It resolves the requested agent with `getAgent(...)`, rejects unknown or disabled agents, and enforces parent spawn policy plus `GJC_BLOCKED_AGENT` self-recursion prevention.
 7. It derives the effective output schema in priority order: task call `schema` (if allowed) → agent frontmatter `output` → inherited parent session schema.
 8. It validates task ids: missing ids and case-insensitive duplicates are immediate errors.
 9. If `isolated` was requested, it requires a git repo (`getRepoRoot(...)` / `captureBaseline(...)`) and resolves the actual backend through `resolveIsolationBackendForTaskExecution(...)`.

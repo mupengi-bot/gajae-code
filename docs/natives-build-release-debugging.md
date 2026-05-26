@@ -84,8 +84,8 @@ Runtime x64 candidate order also includes the unsuffixed default filename after 
 
 ## Runtime flags
 
-- `PI_NATIVE_VARIANT`: x64 runtime override; valid values are `modern` and `baseline`.
-- `PI_CGJCILED`: legacy compiled-mode signal. A populated embedded-addon manifest is also a compiled-mode signal and is the authoritative signal for Bun standalone builds that do not preserve `process.env.PI_CGJCILED`.
+- `GJC_NATIVE_VARIANT`: x64 runtime override; valid values are `modern` and `baseline`.
+- `GJC_CGJCILED`: legacy compiled-mode signal. A populated embedded-addon manifest is also a compiled-mode signal and is the authoritative signal for Bun standalone builds that do not preserve `process.env.GJC_CGJCILED`.
 
 ## Build-time flags/options
 
@@ -145,13 +145,13 @@ Typical local loop:
 
 ## Shipped/compiled binary workflow
 
-In compiled mode (`PI_CGJCILED`, Bun embedded URL markers, or populated embedded manifest):
+In compiled mode (`GJC_CGJCILED`, Bun embedded URL markers, or populated embedded manifest):
 
 1. Loader computes versioned cache dir: `<getNativesDir()>/<packageVersion>`.
 2. If embedded manifest matches current platform+version, loader may extract the selected embedded file into that versioned dir.
 3. Runtime candidate order includes:
    - versioned cache dir,
-   - legacy compiled-binary dir (`%LOCALAPPDATA%/omp` on Windows, `~/.local/bin` elsewhere),
+   - legacy compiled-binary dir (`%LOCALAPPDATA%/gjc` on Windows, `~/.local/bin` elsewhere),
    - package/executable directories.
 4. First successfully loaded addon is returned.
 
@@ -194,7 +194,7 @@ Generated declarations currently include exports from these Rust modules:
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | `Cannot find module` or dynamic library load error for every candidate | Missing release artifact, wrong platform tag, or stale compiled cache                       | Inspect loader error list and `packages/natives/native` filenames | Build correct target/variant; delete stale cache for the package version                      |
 | Export is missing at runtime but present in TypeScript                 | Stale `.node` loaded, generated declarations newer than binary, or Rust export not compiled | Require the actual candidate and inspect `Object.keys(mod)`       | Rebuild native package and remove stale candidate/cache paths                                 |
-| x64 machine loads baseline when modern expected                        | `PI_NATIVE_VARIANT=baseline`, no AVX2 detected, or modern file unavailable                  | Check env and filenames in `native/`                              | Build modern variant (`TARGET_VARIANT=modern ... build`) and ship it                          |
+| x64 machine loads baseline when modern expected                        | `GJC_NATIVE_VARIANT=baseline`, no AVX2 detected, or modern file unavailable                  | Check env and filenames in `native/`                              | Build modern variant (`TARGET_VARIANT=modern ... build`) and ship it                          |
 | Cross-build produces wrong-labeled binary                              | Mismatch between `CROSS_TARGET` and `TARGET_PLATFORM`/`TARGET_ARCH`, or missing x64 variant | Confirm env tuple and output filename                             | Re-run with consistent env values and explicit x64 `TARGET_VARIANT`                           |
 | Compiled binary fails after upgrade                                    | Stale extracted cache or embedded manifest version mismatch                                 | Inspect `<getNativesDir()>/<version>` and loader error list       | Delete versioned cache for the package version; regenerate embedded manifest during packaging |
 | `embed:native` fails with `No native addons found`                     | Required platform artifact was not built before embedding                                   | Check expected list in error text                                 | Build at least one expected artifact for the target, then rerun `embed:native`                |
@@ -248,7 +248,7 @@ Anything outside this input set (Rust toolchain auto-installed delta, host glibc
 
 ### Layout and ownership
 
-- Root: `/data/cache/pi-natives` (provisioned by `entrypoint.sh` alongside the cargo caches, owned `root:omp`, mode `02770` setgid so cached files inherit `gid=omp` and stay readable by every slot user).
+- Root: `/data/cache/pi-natives` (provisioned by `entrypoint.sh` alongside the cargo caches, owned `root:gjc`, mode `02770` setgid so cached files inherit `gid=omp` and stay readable by every slot user).
 - Per-repo subdirectory: `<root>/<repo-slug>/` where the slug is `owner__repo` (mirrors `SandboxManager.pool_path`).
 - Per-entry directory: `<root>/<repo-slug>/<sha256-key>/` containing the cached files plus `manifest.json`.
 - Per-repo lockfile: `<root>/<repo-slug>/.lock` (advisory `fcntl.flock`, exclusive on capture and GC).
@@ -273,7 +273,7 @@ Workspaces that hardlinked a `.node` before GC retain access via the kernel inod
 | Env var                                      | Default                  | Effect                                                        |
 | -------------------------------------------- | ------------------------ | ------------------------------------------------------------- |
 | `ROBGJC_NATIVES_CACHE_ENABLED`               | `true`                   | Master switch. When false the populate/capture hooks no-op and every workspace builds from scratch. |
-| `ROBGJC_NATIVES_CACHE_ROOT`                  | `/data/cache/pi-natives` | Cache root directory. Must be `root:omp 02770` for cross-slot reads.                                  |
+| `ROBGJC_NATIVES_CACHE_ROOT`                  | `/data/cache/pi-natives` | Cache root directory. Must be `root:gjc 02770` for cross-slot reads.                                  |
 | `ROBGJC_NATIVES_CACHE_MAX_ENTRIES_PER_REPO`  | `8`                      | LRU entry-count cap, per repo slug.                                                                  |
 | `ROBGJC_NATIVES_CACHE_MAX_BYTES`             | `4294967296` (4 GiB)     | LRU byte cap, per repo slug.                                                                          |
 | `ROBGJC_NATIVES_CACHE_GC_INTERVAL_SECONDS`   | `3600`                   | Period of the background GC loop in `WorkerPool`.                                                    |

@@ -25,16 +25,16 @@ GJC merges LSP config from multiple files, lowest to highest priority:
 |----------|----------|
 | 5 (lowest) | `~/lsp.json`, `~/.lsp.json`, `~/lsp.yaml`, `~/.lsp.yaml` |
 | 4 | Plugin LSP configs (marketplace / `--plugin-dir` roots) |
-| 3 | `~/.omp/agent/lsp.json`, `~/.omp/agent/lsp.yaml`, `~/.claude/lsp.*` |
-| 2 | `<project>/.omp/lsp.json`, `<project>/.omp/lsp.yaml`, `<project>/.claude/lsp.*` |
+| 3 | `~/.gjc/agent/lsp.json`, `~/.gjc/agent/lsp.yaml`, `~/.claude/lsp.*` |
+| 2 | `<project>/.gjc/lsp.json`, `<project>/.gjc/lsp.yaml`, `<project>/.claude/lsp.*` |
 | 1 (highest) | `<project>/lsp.json`, `<project>/.lsp.json`, `<project>/lsp.yaml` |
 
 Each location accepts both `.json` and `.yaml` / `.yml` variants, as well as hidden-file versions (`.lsp.json`, `.lsp.yaml`). Files are merged in order: higher-priority files override lower-priority fields for the same server. Servers not mentioned in any override file remain at their built-in defaults.
 
 **Recommended locations:**
 
-- User-wide preferences → `~/.omp/agent/lsp.json`
-- Project-specific overrides → `<project>/.omp/lsp.json`
+- User-wide preferences → `~/.gjc/agent/lsp.json`
+- Project-specific overrides → `<project>/.gjc/lsp.json`
 
 > **Note:** The presence of any LSP config file disables auto-detection. When at least one file is found, GJC skips the binary-scan phase and loads all servers that have matching `rootMarkers`, an available binary, and are not explicitly `disabled`.
 
@@ -166,7 +166,7 @@ Shut down language servers that have been inactive for more than five minutes:
 
 ### Disable a server for one project, keep it globally
 
-Place the override in `<project>/.omp/lsp.json`:
+Place the override in `<project>/.gjc/lsp.json`:
 
 ```json
 {
@@ -178,7 +178,7 @@ Place the override in `<project>/.omp/lsp.json`:
 }
 ```
 
-The user-level config in `~/.omp/agent/lsp.json` is unaffected; pylsp is only suppressed in this project.
+The user-level config in `~/.gjc/agent/lsp.json` is unaffected; pylsp is only suppressed in this project.
 
 ## Built-in server list
 

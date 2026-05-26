@@ -1,10 +1,10 @@
 # Keybindings
 
-Run `/hotkeys` inside an `omp` session to see the active chords for your current build. The list reflects any remaps loaded from disk and any bindings added by extensions.
+Run `/hotkeys` inside an `gjc` session to see the active chords for your current build. The list reflects any remaps loaded from disk and any bindings added by extensions.
 
 ## Customize keybindings
 
-User remaps live in `~/.omp/agent/keybindings.json`. The file is a JSON object whose keys are keybinding action IDs and whose values are either one chord string or an array of chord strings. It is not read from `~/.omp/agent/config.yml`, and there is no nested `keybindings` object.
+User remaps live in `~/.gjc/agent/keybindings.json`. The file is a JSON object whose keys are keybinding action IDs and whose values are either one chord string or an array of chord strings. It is not read from `~/.gjc/agent/config.yml`, and there is no nested `keybindings` object.
 
 ```json
 {

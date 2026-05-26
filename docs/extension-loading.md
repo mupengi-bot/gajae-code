@@ -30,14 +30,14 @@ Extension loading builds a list of module entry files, imports each module with 
 
 Effective native locations:
 
-- Project: `<cwd>/.omp/extensions`
-- User: `~/.omp/agent/extensions`
+- Project: `<cwd>/.gjc/extensions`
+- User: `~/.gjc/agent/extensions`
 
 Path roots come from the native provider (`SOURCE_PATHS.native`).
 
 Notes:
 
-- Native auto-discovery is currently `.omp` based.
+- Native auto-discovery is currently `.gjc` based.
 - Legacy `.pi` is still accepted in `package.json` manifest keys (`pi.extensions`), but not as a native root here.
 
 ### 2) Installed plugin extension entries
@@ -57,16 +57,16 @@ Configured path sources in the main session startup path (`sdk.ts`):
 
 Global settings file:
 
-- `~/.omp/agent/config.yml` (or custom agent dir via `PI_CODING_AGENT_DIR`)
+- `~/.gjc/agent/config.yml` (or custom agent dir via `GJC_CODING_AGENT_DIR`)
 
 Project settings file:
 
-- `<cwd>/.omp/settings.json`
+- `<cwd>/.gjc/settings.json`
 
 Examples:
 
 ```yaml
-# ~/.omp/agent/config.yml
+# ~/.gjc/agent/config.yml
 extensions:
   - ~/my-exts/safety.ts
   - ./local/ext-pack
@@ -74,7 +74,7 @@ extensions:
 
 ```json
 {
-  "extensions": ["./.omp/extensions/my-extra"]
+  "extensions": ["./.gjc/extensions/my-extra"]
 }
 ```
 
@@ -219,7 +219,7 @@ When events run through `ExtensionRunner`, handler exceptions are caught and emi
 ### User-level
 
 ```text
-~/.omp/agent/
+~/.gjc/agent/
   config.yml
   extensions/
     guardrails.ts
@@ -231,7 +231,7 @@ When events run through `ExtensionRunner`, handler exceptions are caught and emi
 
 ```text
 <repo>/
-  .omp/
+  .gjc/
     settings.json
     extensions/
       checks/

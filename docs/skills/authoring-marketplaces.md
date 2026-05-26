@@ -215,8 +215,8 @@ Minimum `package.json`:
 CLI equivalent:
 
 ```
-omp plugin marketplace add owner/repo
-omp plugin install name@marketplace-name
+gjc plugin marketplace add owner/repo
+gjc plugin install name@marketplace-name
 ```
 
 Scope behavior:

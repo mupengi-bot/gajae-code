@@ -32,7 +32,7 @@ The tool is `concurrency = "exclusive"` for a session, so calls do not overlap.
 
 ## Kernel lifecycle
 
-Each kernel is a single Python subprocess: `python -u <runner.py>`. The runner is bundled with the host binary (Bun text import), written to `~/.omp/python-env`-adjacent tmp cache once per script-hash, and reused by every subsequent spawn.
+Each kernel is a single Python subprocess: `python -u <runner.py>`. The runner is bundled with the host binary (Bun text import), written to `~/.gjc/python-env`-adjacent tmp cache once per script-hash, and reused by every subsequent spawn.
 
 Kernel startup sequence:
 
@@ -131,13 +131,13 @@ If an intermediate cell fails:
 Environment is filtered before launching the runner:
 
 - Allowlist includes core vars like `PATH`, `HOME`, locale vars, `VIRTUAL_ENV`, `PYTHONPATH`, etc.
-- Allow-prefixes: `LC_`, `XDG_`, `PI_`
+- Allow-prefixes: `LC_`, `XDG_`, `GJC_`
 - Denylist strips common API keys (OpenAI/Anthropic/Gemini/etc.)
 
 Runtime selection order:
 
 1. Active/located venv (`VIRTUAL_ENV`, then `<cwd>/.venv`, `<cwd>/venv`)
-2. Managed venv at `~/.omp/python-env`
+2. Managed venv at `~/.gjc/python-env`
 3. `python` or `python3` on PATH
 
 When a venv is selected, its bin/Scripts path is prepended to `PATH`.
@@ -146,13 +146,13 @@ The runner additionally receives `PYTHONUNBUFFERED=1` and `PYTHONIOENCODING=utf-
 
 ## Tool availability and mode selection
 
-`eval.py` / `eval.js` (both default `true`) plus optional `PI_PY` override controls eval backend exposure:
+`eval.py` / `eval.js` (both default `true`) plus optional `GJC_PY` override controls eval backend exposure:
 
 - Python backend only (`eval.py=true`, `eval.js=false`)
 - JavaScript backend only (`eval.py=false`, `eval.js=true`)
 - both backends
 
-`PI_PY` accepted values:
+`GJC_PY` accepted values:
 
 - `0` / `bash` → JavaScript backend only
 - `1` / `py` → Python backend only
@@ -226,15 +226,15 @@ Output is streamed through `OutputSink` and may be persisted to artifact storage
 
 ## Operational troubleshooting
 
-- **Python backend not available** — Check `eval.py`, `PI_PY`, and that `python`/`python3` is on PATH. If preflight fails and `eval.js` is enabled, omit `language` or pass `language: "js"` to use JavaScript.
-- **No Python on PATH** — Install a system Python 3.8+ or place a venv at `~/.omp/python-env`. `omp setup python --check` reports the resolved interpreter.
+- **Python backend not available** — Check `eval.py`, `GJC_PY`, and that `python`/`python3` is on PATH. If preflight fails and `eval.js` is enabled, omit `language` or pass `language: "js"` to use JavaScript.
+- **No Python on PATH** — Install a system Python 3.8+ or place a venv at `~/.gjc/python-env`. `gjc setup python --check` reports the resolved interpreter.
 - **Execution hangs then times out** — Increase tool `timeout` (max 600s) if workload is legitimate. For stuck native code, cancellation triggers `SIGINT` first then escalates; the session restarts on the next request.
 - **stdin/input prompts in Python code** — `input()` is not supported; pass data programmatically.
 - **Working directory errors** — Tool validates `cwd` exists and is a directory before execution.
 
 ## Relevant environment variables
 
-- `PI_PY` — tool exposure override
-- `PI_PYTHON_SKIP_CHECK=1` — bypass Python preflight/warm checks
-- `PI_PYTHON_INTEGRATION=1` — enable gated integration tests that spawn a real Python
-- `PI_PYTHON_IPC_TRACE=1` — log NDJSON frames exchanged with the runner subprocess
+- `GJC_PY` — tool exposure override
+- `GJC_PYTHON_SKIP_CHECK=1` — bypass Python preflight/warm checks
+- `GJC_PYTHON_INTEGRATION=1` — enable gated integration tests that spawn a real Python
+- `GJC_PYTHON_IPC_TRACE=1` — log NDJSON frames exchanged with the runner subprocess

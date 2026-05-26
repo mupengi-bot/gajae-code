@@ -103,8 +103,8 @@ Theme lookup order (`loadThemeJson`):
 
 Custom themes directory comes from `getCustomThemesDir()`:
 
-- default: `~/.omp/agent/themes`
-- overridden by `PI_CODING_AGENT_DIR` (`$PI_CODING_AGENT_DIR/themes`)
+- default: `~/.gjc/agent/themes`
+- overridden by `GJC_CODING_AGENT_DIR` (`$GJC_CODING_AGENT_DIR/themes`)
 
 `getAvailableThemes()` returns merged built-in + custom names, sorted, with built-ins taking precedence on name collision.
 
@@ -215,8 +215,8 @@ Other tokens are unchanged.
 Theme-related settings are persisted by `Settings` to global config YAML:
 
 - path: `<agentDir>/config.yml`
-- default agent dir: `~/.omp/agent`
-- effective default file: `~/.omp/agent/config.yml`
+- default agent dir: `~/.gjc/agent`
+- effective default file: `~/.gjc/agent/config.yml`
 
 Persisted keys:
 
@@ -229,7 +229,7 @@ Legacy migration exists: old flat `theme: "name"` is migrated to nested `theme.d
 
 ## Creating a custom theme (practical)
 
-1. Create file in custom themes dir, e.g. `~/.omp/agent/themes/my-theme.json`.
+1. Create file in custom themes dir, e.g. `~/.gjc/agent/themes/my-theme.json`.
 2. Include `name`, optional `vars`, and **all required** `colors` tokens.
 3. Optionally include `symbols` and `export`.
 4. Select the theme in Settings (`Display -> Dark theme` or `Display -> Light theme`) depending on which auto slot you want.

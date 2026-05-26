@@ -23,12 +23,12 @@ extensions:
 **Option C — load once via CLI flag:**
 
 ```
-omp --extension ./hello-extension
+gjc --extension ./hello-extension
 ```
 
 ## Usage
 
-After loading, type `/hello` in the omp prompt to trigger the notification.
+After loading, type `/hello` in the gjc prompt to trigger the notification.
 
 ## What it demonstrates
 

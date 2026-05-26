@@ -12,8 +12,8 @@ A minimal `gajae-code` marketplace catalog that demonstrates the `marketplace.js
 Or from the CLI:
 
 ```
-omp plugin marketplace add ./docs/skills/examples/mini-marketplace
-omp plugin install my-plugin@example-marketplace
+gjc plugin marketplace add ./docs/skills/examples/mini-marketplace
+gjc plugin install my-plugin@example-marketplace
 ```
 
 ## What it demonstrates

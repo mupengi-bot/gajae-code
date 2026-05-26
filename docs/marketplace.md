@@ -19,8 +19,8 @@ A **plugin** is a directory containing skills, commands, hooks, MCP servers, or 
 
 **Scopes**: plugins can be installed at two scopes:
 
-- **user** (default) -- available in all projects, stored in `~/.omp/plugins/installed_plugins.json`
-- **project** -- available only in the current project, stored in `.omp/plugins/installed_plugins.json`
+- **user** (default) -- available in all projects, stored in `~/.gjc/plugins/installed_plugins.json`
+- **project** -- available only in the current project, stored in `.gjc/plugins/installed_plugins.json`
 
 Project-scoped installs shadow user-scoped installs of the same plugin.
 
@@ -56,14 +56,14 @@ Project-scoped installs shadow user-scoped installs of the same plugin.
 The same operations are available from the command line:
 
 ```
-omp plugin marketplace add <source>
-omp plugin marketplace remove <name>
-omp plugin marketplace update [name]
-omp plugin marketplace list
-omp plugin discover [marketplace]
-omp plugin install [--force] [--scope user|project] name@marketplace
-omp plugin uninstall [--scope user|project] name@marketplace
-omp plugin upgrade [--scope user|project] [name@marketplace]
+gjc plugin marketplace add <source>
+gjc plugin marketplace remove <name>
+gjc plugin marketplace update [name]
+gjc plugin marketplace list
+gjc plugin discover [marketplace]
+gjc plugin install [--force] [--scope user|project] name@marketplace
+gjc plugin uninstall [--scope user|project] name@marketplace
+gjc plugin upgrade [--scope user|project] [name@marketplace]
 ```
 
 ## Marketplace sources
@@ -187,7 +187,7 @@ The `source` field supports several formats:
 ## On-disk layout
 
 ```
-~/.omp/
+~/.gjc/
   marketplaces.json              # Registry of added marketplaces
   plugins/
     installed_plugins.json       # User-scoped installed plugins
@@ -195,7 +195,7 @@ The `source` field supports several formats:
       marketplaces/              # Cached marketplace catalogs
       plugins/                   # Cached plugin directories
 
-<project>/.omp/
+<project>/.gjc/
   plugins/
     installed_plugins.json       # Project-scoped installed plugins
 ```

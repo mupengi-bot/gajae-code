@@ -68,7 +68,7 @@ For x64, variant selection uses:
 - macOS: `sysctl -n machdep.cpu.leaf7_features`, then `machdep.cpu.features`
 - Windows: PowerShell check for `System.Runtime.Intrinsics.X86.Avx2`
 
-`PI_NATIVE_VARIANT` can force `modern` or `baseline`; invalid values are ignored.
+`GJC_NATIVE_VARIANT` can force `modern` or `baseline`; invalid values are ignored.
 
 ### Binary distribution and extraction model
 
@@ -78,11 +78,11 @@ For compiled binaries, loader behavior is:
 
 1. Check versioned user cache path: `<getNativesDir()>/<packageVersion>/...`.
 2. Check legacy compiled-binary location:
-   - Windows: `%LOCALAPPDATA%/omp` (fallback `%USERPROFILE%/AppData/Local/omp`)
+   - Windows: `%LOCALAPPDATA%/gjc` (fallback `%USERPROFILE%/AppData/Local/omp`)
    - non-Windows: `~/.local/bin`
 3. Fall back to packaged `native/` and executable directory candidates.
 
-`getNativesDir()` uses `$XDG_DATA_HOME/omp/natives` when `$XDG_DATA_HOME/omp` exists; otherwise it uses `~/.omp/natives`.
+`getNativesDir()` uses `$XDG_DATA_HOME/gjc/natives` when `$XDG_DATA_HOME/gjc` exists; otherwise it uses `~/.gjc/natives`.
 
 If a populated embedded addon manifest is present, it is also treated as a compiled-binary signal. The loader can extract the matching embedded `.node` into the versioned cache directory before candidate probing.
 
