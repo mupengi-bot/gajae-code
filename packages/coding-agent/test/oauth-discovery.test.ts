@@ -1,10 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import {
-	analyzeAuthError,
-	discoverOAuthEndpoints,
-	extractMcpAuthServerUrl,
-} from "../src/runtime-mcp/oauth-discovery";
 import { hookFetch } from "@gajae-code/utils";
+import { analyzeAuthError, discoverOAuthEndpoints, extractMcpAuthServerUrl } from "../src/runtime-mcp/oauth-discovery";
 
 describe("mcp oauth discovery", () => {
 	it("extracts Mcp-Auth-Server from transport error headers", () => {

@@ -141,15 +141,6 @@ import { GoalRuntime } from "../goals/runtime";
 import type { Goal, GoalModeState } from "../goals/state";
 import type { HindsightSessionState } from "../hindsight/state";
 import { type LocalProtocolOptions, resolveLocalUrlToPath } from "../internal-urls";
-import {
-	buildDiscoverableMCPSearchIndex,
-	collectDiscoverableMCPTools,
-	type DiscoverableMCPSearchIndex,
-	type DiscoverableMCPTool,
-	isMCPBridgeTool,
-	isMCPToolName,
-	selectDiscoverableMCPToolNamesByServer,
-} from "../runtime-mcp/discoverable-tool-metadata";
 import { resolveMemoryBackend } from "../memory-backend";
 import { getCurrentThemeName, theme } from "../modes/theme/theme";
 import type { PlanModeState } from "../plan-mode/state";
@@ -164,6 +155,15 @@ import planModeToolDecisionReminderPrompt from "../prompts/system/plan-mode-tool
 import ttsrInterruptTemplate from "../prompts/system/ttsr-interrupt.md" with { type: "text" };
 import ttsrToolReminderTemplate from "../prompts/system/ttsr-tool-reminder.md" with { type: "text" };
 import { type AgentRegistry, MAIN_AGENT_ID } from "../registry/agent-registry";
+import {
+	buildDiscoverableMCPSearchIndex,
+	collectDiscoverableMCPTools,
+	type DiscoverableMCPSearchIndex,
+	type DiscoverableMCPTool,
+	isMCPBridgeTool,
+	isMCPToolName,
+	selectDiscoverableMCPToolNamesByServer,
+} from "../runtime-mcp/discoverable-tool-metadata";
 import { deobfuscateSessionContext, type SecretObfuscator } from "../secrets/obfuscator";
 import { invalidateHostMetadata } from "../ssh/connection-manager";
 import { resolveThinkingLevelForModel, toReasoningEffort } from "../thinking";
