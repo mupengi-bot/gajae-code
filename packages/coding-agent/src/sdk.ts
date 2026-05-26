@@ -87,7 +87,6 @@ import { discoverAndLoadMCPTools, MCPManager, type MCPToolsLoadResult } from "./
 import {
 	collectDiscoverableMCPTools,
 	formatDiscoverableMCPToolServerSummary,
-	isMCPToolName,
 	selectDiscoverableMCPToolNamesByServer,
 } from "./mcp/discoverable-tool-metadata";
 import { resolveMemoryBackend } from "./memory-backend";

@@ -146,6 +146,7 @@ import {
 	collectDiscoverableMCPTools,
 	type DiscoverableMCPSearchIndex,
 	type DiscoverableMCPTool,
+	isMCPBridgeTool,
 	isMCPToolName,
 	selectDiscoverableMCPToolNamesByServer,
 } from "../mcp/discoverable-tool-metadata";
@@ -2941,7 +2942,7 @@ export class AgentSession {
 	}
 
 	#getActiveNonMCPToolNames(): string[] {
-		return this.getActiveToolNames().filter(name => !isMCPToolName(name) && this.#toolRegistry.has(name));
+		return this.getActiveToolNames().filter(name => !this.#discoverableMCPTools.has(name) && this.#toolRegistry.has(name));
 	}
 
 	/**
@@ -3026,7 +3027,7 @@ export class AgentSession {
 		const nextSelectedMCPToolNames = new Set(this.#selectedMCPToolNames);
 		const activated: string[] = [];
 		for (const name of toolNames) {
-			if (!isMCPToolName(name) || !this.#discoverableMCPTools.has(name) || !this.#toolRegistry.has(name)) {
+			if (!this.#discoverableMCPTools.has(name) || !this.#toolRegistry.has(name)) {
 				continue;
 			}
 			nextSelectedMCPToolNames.add(name);
@@ -3119,8 +3120,8 @@ export class AgentSession {
 	}
 
 	async activateDiscoveredTools(toolNames: string[]): Promise<string[]> {
-		const mcpNames = toolNames.filter(isMCPToolName);
-		const nonMcpNames = toolNames.filter(name => !isMCPToolName(name));
+		const mcpNames = toolNames.filter(name => this.#discoverableMCPTools.has(name));
+		const nonMcpNames = toolNames.filter(name => !this.#discoverableMCPTools.has(name));
 		const activated: string[] = [];
 
 		// Activate MCP tools via existing path
@@ -3279,7 +3280,7 @@ export class AgentSession {
 		}
 		const activeNameSet = new Set(validToolNames);
 		for (const name of Array.from(this.#selectedDiscoveredToolNames)) {
-			if (!activeNameSet.has(name) || isMCPToolName(name) || !this.#toolRegistry.has(name)) {
+			if (!activeNameSet.has(name) || this.#discoverableMCPTools.has(name) || !this.#toolRegistry.has(name)) {
 				this.#selectedDiscoveredToolNames.delete(name);
 			}
 		}
@@ -3490,7 +3491,8 @@ export class AgentSession {
 		const previousSelectedMCPToolNames = this.getSelectedMCPToolNames();
 		const existingNames = Array.from(this.#toolRegistry.keys());
 		for (const name of existingNames) {
-			if (isMCPToolName(name)) {
+			const tool = this.#toolRegistry.get(name);
+			if (this.#discoverableMCPTools.has(name) || (tool && isMCPBridgeTool(tool))) {
 				this.#toolRegistry.delete(name);
 			}
 		}
