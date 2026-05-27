@@ -8,10 +8,12 @@ import { settings } from "../../config/settings";
 import type { StatusLinePreset, StatusLineSegmentId, StatusLineSeparatorStyle } from "../../config/settings-schema";
 import { theme } from "../../modes/theme/theme";
 import type { AgentSession } from "../../session/agent-session";
+import { readVisibleSkillActiveState, type SkillActiveEntry } from "../../skill-state/active-state";
 import * as git from "../../utils/git";
 import { getSessionAccentAnsi, getSessionAccentHex } from "../../utils/session-color";
 import { sanitizeStatusText } from "../shared";
 import { computeNonMessageTokens } from "../utils/context-usage";
+import { renderSkillHudBar } from "./skill-hud/render";
 import {
 	canReuseCachedPr,
 	createPrCacheContext,
@@ -37,6 +39,7 @@ export interface StatusLineSettings {
 	separator?: StatusLineSeparatorStyle;
 	segmentOptions?: StatusLineSegmentOptions;
 	showHookStatus?: boolean;
+	showSkillHud?: boolean;
 	sessionAccent?: boolean;
 }
 
@@ -154,6 +157,9 @@ export class StatusLineComponent implements Component {
 	#planModeStatus: { enabled: boolean; paused: boolean } | null = null;
 	#loopModeStatus: { enabled: boolean } | null = null;
 	#goalModeStatus: { enabled: boolean; paused: boolean } | null = null;
+	#skillHudEntries: SkillActiveEntry[] = [];
+	#skillHudLastFetch = 0;
+	#skillHudInFlight = false;
 
 	// Git status caching (1s TTL)
 	#cachedGitStatus: { staged: number; unstaged: number; untracked: number } | null = null;
@@ -197,6 +203,7 @@ export class StatusLineComponent implements Component {
 			rightSegments: settings.get("statusLine.rightSegments"),
 			separator: settings.get("statusLine.separator"),
 			showHookStatus: settings.get("statusLine.showHookStatus"),
+			showSkillHud: settings.get("statusLine.showSkillHud"),
 			segmentOptions: settings.getGroup("statusLine").segmentOptions,
 			sessionAccent: settings.get("statusLine.sessionAccent"),
 		};
@@ -228,6 +235,11 @@ export class StatusLineComponent implements Component {
 
 	setGoalModeStatus(status: { enabled: boolean; paused: boolean } | undefined): void {
 		this.#goalModeStatus = status ?? null;
+	}
+
+	setSkillHudEntriesForTest(entries: SkillActiveEntry[]): void {
+		this.#skillHudEntries = entries;
+		this.#skillHudLastFetch = Date.now();
 	}
 
 	setHookStatus(key: string, text: string | undefined): void {
@@ -420,6 +432,28 @@ export class StatusLineComponent implements Component {
 		}
 
 		return null;
+	}
+
+	#refreshSkillHudInBackground(): void {
+		if (this.#settings.showSkillHud === false) return;
+		const now = Date.now();
+		if (this.#skillHudInFlight || now - this.#skillHudLastFetch < 1000) return;
+		const getCwd = this.session.sessionManager?.getCwd;
+		const getSessionId = this.session.sessionManager?.getSessionId;
+		const cwd = typeof getCwd === "function" ? getCwd.call(this.session.sessionManager) : getProjectDir();
+		const sessionId = typeof getSessionId === "function" ? getSessionId.call(this.session.sessionManager) : undefined;
+		this.#skillHudInFlight = true;
+		void readVisibleSkillActiveState(cwd, sessionId)
+			.then(state => {
+				this.#skillHudEntries = state?.active_skills ?? [];
+			})
+			.catch(() => {
+				this.#skillHudEntries = [];
+			})
+			.finally(() => {
+				this.#skillHudLastFetch = Date.now();
+				this.#skillHudInFlight = false;
+			});
 	}
 
 	/**
@@ -780,6 +814,12 @@ export class StatusLineComponent implements Component {
 
 	render(width: number): string[] {
 		const lines: string[] = [];
+		this.#refreshSkillHudInBackground();
+		const skillHud = this.#settings.showSkillHud === false ? null : renderSkillHudBar(this.#skillHudEntries, width);
+		if (skillHud) {
+			lines.push(skillHud);
+		}
+
 		const statusLine = this.#buildStatusLine(width);
 		if (statusLine) {
 			lines.push(truncateToWidth(statusLine, width));

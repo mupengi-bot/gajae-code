@@ -165,6 +165,7 @@ import {
 	selectDiscoverableMCPToolNamesByServer,
 } from "../runtime-mcp/discoverable-tool-metadata";
 import { deobfuscateSessionContext, type SecretObfuscator } from "../secrets/obfuscator";
+import { isCanonicalGjcWorkflowSkill, syncSkillActiveState } from "../skill-state/active-state";
 import { invalidateHostMetadata } from "../ssh/connection-manager";
 import { resolveThinkingLevelForModel, toReasoningEffort } from "../thinking";
 import {
@@ -196,6 +197,7 @@ import {
 	type PythonExecutionMessage,
 	readPendingDisplayTag,
 	SILENT_ABORT_MARKER,
+	SKILL_PROMPT_MESSAGE_TYPE,
 } from "./messages";
 import { formatSessionDumpText } from "./session-dump-format";
 import type {
@@ -839,6 +841,7 @@ export class AgentSession {
 	#mcpPromptCommands: LoadedCustomCommand[] = [];
 
 	#skillsSettings: SkillsSettings | undefined;
+	#activeSkillState: { skill: string; sessionId?: string } | undefined;
 
 	// Model registry for API key resolution
 	#modelRegistry: ModelRegistry;
@@ -1746,6 +1749,17 @@ export class AgentSession {
 					cacheWrite: usage.cacheWrite,
 				},
 			});
+			if (this.#activeSkillState) {
+				await syncSkillActiveState({
+					cwd: this.sessionManager.getCwd(),
+					skill: this.#activeSkillState.skill,
+					active: false,
+					phase: "complete",
+					sessionId: this.#activeSkillState.sessionId,
+					source: "skill-prompt",
+				}).catch(() => {});
+				this.#activeSkillState = undefined;
+			}
 			const fallbackAssistant = [...event.messages]
 				.reverse()
 				.find((message): message is AssistantMessage => message.role === "assistant");
@@ -3991,6 +4005,28 @@ export class AgentSession {
 		}
 	}
 
+	async #syncSkillPromptActiveState(
+		message: Pick<CustomMessage<unknown>, "customType" | "details">,
+		active: boolean,
+	): Promise<void> {
+		if (message.customType !== SKILL_PROMPT_MESSAGE_TYPE) return;
+		const details = message.details;
+		if (!details || typeof details !== "object") return;
+		const name = (details as { name?: unknown }).name;
+		if (typeof name !== "string" || !isCanonicalGjcWorkflowSkill(name)) return;
+		const cwd = this.sessionManager.getCwd();
+		const sessionId = this.sessionManager.getSessionId();
+		await syncSkillActiveState({
+			cwd,
+			skill: name,
+			active,
+			phase: active ? "running" : "complete",
+			sessionId,
+			source: "skill-prompt",
+		});
+		this.#activeSkillState = active ? { skill: name, sessionId } : undefined;
+	}
+
 	async promptCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "attribution">,
 		options?: Pick<PromptOptions, "streamingBehavior" | "toolChoice">,
@@ -4021,7 +4057,12 @@ export class AgentSession {
 			timestamp: Date.now(),
 		};
 
-		await this.#promptWithMessage(customMessage, textContent, options);
+		await this.#syncSkillPromptActiveState(customMessage, true).catch(() => {});
+		try {
+			await this.#promptWithMessage(customMessage, textContent, options);
+		} finally {
+			await this.#syncSkillPromptActiveState(customMessage, false).catch(() => {});
+		}
 	}
 
 	async #promptWithMessage(

@@ -523,6 +523,11 @@ export const SETTINGS_SCHEMA = {
 		default: false,
 	},
 
+	"statusLine.showSkillHud": {
+		type: "boolean",
+		default: true,
+	},
+
 	"statusLine.leftSegments": { type: "array", default: [] as StatusLineSegmentId[] },
 
 	"statusLine.rightSegments": { type: "array", default: [] as StatusLineSegmentId[] },
@@ -2878,6 +2883,7 @@ export interface StatusLineSettings {
 	preset: StatusLinePreset;
 	separator: StatusLineSeparatorStyle;
 	showHookStatus: boolean;
+	showSkillHud: boolean;
 	leftSegments: StatusLineSegmentId[];
 	rightSegments: StatusLineSegmentId[];
 	segmentOptions: Record<string, unknown>;
