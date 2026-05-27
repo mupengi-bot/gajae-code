@@ -210,7 +210,7 @@ export class StatusLineComponent implements Component {
 	}
 
 	updateSettings(settings: StatusLineSettings): void {
-		this.#settings = settings;
+		this.#settings = { ...this.#settings, ...settings };
 	}
 
 	setAutoCompactEnabled(enabled: boolean): void {

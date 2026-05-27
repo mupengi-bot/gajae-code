@@ -59,6 +59,27 @@ describe("GJC native skill-state hooks", () => {
 		expect(modeState).toMatchObject({ active: true, current_phase: "interviewing", session_id: "session-1" });
 	});
 
+	it("encodes hook session ids before writing skill and mode state paths", async () => {
+		const root = await cwd();
+		await dispatchGjcNativeSkillHook({
+			hookEventName: "UserPromptSubmit",
+			userPrompt: "$team coordinate this",
+			cwd: root,
+			sessionId: "../../../escape",
+			threadId: "thread-safe",
+		});
+
+		const encodedSession = "%2E%2E%2F%2E%2E%2F%2E%2E%2Fescape";
+		const state = await readVisibleSkillActiveState(root, "../../../escape");
+		expect(state?.initialized_state_path).toBe(
+			path.join(root, ".gjc", "state", "sessions", encodedSession, "team-state.json"),
+		);
+		expect(
+			await fs.stat(path.join(root, ".gjc", "state", "sessions", encodedSession, "skill-active-state.json")),
+		).toBeDefined();
+		await expect(fs.stat(path.join(root, ".gjc", "escape"))).rejects.toThrow();
+	});
+
 	it("Stop blocks while matching skill state is active and allows terminal mode state", async () => {
 		const root = await cwd();
 		await dispatchGjcNativeSkillHook({

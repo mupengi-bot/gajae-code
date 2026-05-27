@@ -62,6 +62,15 @@ describe("GJC skill-active state", () => {
 		});
 	});
 
+	it("encodes session ids before using them as state path segments", async () => {
+		await withTempCwd(async cwd => {
+			const paths = getSkillActiveStatePaths(cwd, "../escape/session");
+			expect(paths.sessionPath).toBe(
+				path.join(cwd, ".gjc", "state", "sessions", "%2E%2E%2Fescape%2Fsession", "skill-active-state.json"),
+			);
+		});
+	});
+
 	it("filters root fallback entries to the current session", async () => {
 		await withTempCwd(async cwd => {
 			await syncSkillActiveState({ cwd, skill: "team", active: true, phase: "running", sessionId: "sess-a" });
@@ -88,6 +97,20 @@ describe("GJC skill-active state", () => {
 			const sessionB = await readVisibleSkillActiveState(cwd, "sess-b");
 			expect(sessionA).toBeNull();
 			expect(sessionB?.active_skills?.map(entry => entry.session_id)).toEqual(["sess-b"]);
+		});
+	});
+
+	it("suppresses stale visible entries left by crashed sessions", async () => {
+		await withTempCwd(async cwd => {
+			await syncSkillActiveState({
+				cwd,
+				skill: "team",
+				active: true,
+				sessionId: "sess-old",
+				nowIso: "2000-01-01T00:00:00.000Z",
+			});
+
+			expect(await readVisibleSkillActiveState(cwd, "sess-old")).toBeNull();
 		});
 	});
 

@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 export const SKILL_ACTIVE_STATE_FILE = "skill-active-state.json";
+export const SKILL_ACTIVE_STALE_MS = 24 * 60 * 60 * 1000;
 
 export const CANONICAL_GJC_WORKFLOW_SKILLS = ["deep-interview", "ralplan", "ultragoal", "team"] as const;
 
@@ -55,8 +56,23 @@ function safeString(value: unknown): string {
 	return typeof value === "string" ? value : "";
 }
 
+function encodePathSegment(value: string): string {
+	return encodeURIComponent(value).replaceAll(".", "%2E");
+}
+
 function entryKey(entry: Pick<SkillActiveEntry, "skill" | "session_id">): string {
 	return `${entry.skill}::${safeString(entry.session_id).trim()}`;
+}
+
+function timestampMs(value: string | undefined): number | null {
+	if (!value) return null;
+	const ms = Date.parse(value);
+	return Number.isFinite(ms) ? ms : null;
+}
+
+function isFreshEntry(entry: SkillActiveEntry, nowMs = Date.now()): boolean {
+	const ms = timestampMs(entry.updated_at) ?? timestampMs(entry.activated_at);
+	return ms === null || nowMs - ms <= SKILL_ACTIVE_STALE_MS;
 }
 
 function normalizeEntry(raw: unknown): SkillActiveEntry | null {
@@ -143,7 +159,7 @@ export function getSkillActiveStatePaths(cwd: string, sessionId?: string): Skill
 	if (!normalizedSessionId) return { rootPath };
 	return {
 		rootPath,
-		sessionPath: path.join(stateDir, "sessions", normalizedSessionId, SKILL_ACTIVE_STATE_FILE),
+		sessionPath: path.join(stateDir, "sessions", encodePathSegment(normalizedSessionId), SKILL_ACTIVE_STATE_FILE),
 	};
 }
 
@@ -169,9 +185,11 @@ function mergeVisibleEntries(
 	rootState: SkillActiveState | null,
 	sessionId?: string,
 ): SkillActiveEntry[] {
-	const rootEntries = filterRootEntriesForSession(listActiveSkills(rootState), sessionId);
+	const rootEntries = filterRootEntriesForSession(listActiveSkills(rootState), sessionId).filter(entry =>
+		isFreshEntry(entry),
+	);
 	const merged = new Map(rootEntries.map(entry => [entryKey(entry), entry]));
-	for (const entry of listActiveSkills(sessionState)) {
+	for (const entry of listActiveSkills(sessionState).filter(entry => isFreshEntry(entry))) {
 		merged.set(entryKey(entry), entry);
 	}
 	return [...merged.values()];

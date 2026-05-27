@@ -153,6 +153,10 @@ export function resolveGjcStateDir(cwd: string, stateDir?: string): string {
 	return stateDir ? path.resolve(cwd, stateDir) : path.join(cwd, GJC_STATE_DIR);
 }
 
+function encodeStatePathSegment(value: string): string {
+	return encodeURIComponent(value).replaceAll(".", "%2E");
+}
+
 function initialPhaseForSkill(skill: GjcWorkflowSkill): string {
 	if (skill === "deep-interview") return "interviewing";
 	if (skill === "ultragoal") return "goal-planning";
@@ -164,12 +168,12 @@ function modeStateFileName(skill: GjcWorkflowSkill): string {
 }
 
 function modeStatePath(stateDir: string, skill: GjcWorkflowSkill, sessionId?: string): string {
-	if (sessionId) return path.join(stateDir, "sessions", sessionId, modeStateFileName(skill));
+	if (sessionId) return path.join(stateDir, "sessions", encodeStatePathSegment(sessionId), modeStateFileName(skill));
 	return path.join(stateDir, modeStateFileName(skill));
 }
 
 function skillStatePath(stateDir: string, sessionId?: string): string {
-	if (sessionId) return path.join(stateDir, "sessions", sessionId, SKILL_ACTIVE_STATE_FILE);
+	if (sessionId) return path.join(stateDir, "sessions", encodeStatePathSegment(sessionId), SKILL_ACTIVE_STATE_FILE);
 	return path.join(stateDir, SKILL_ACTIVE_STATE_FILE);
 }
 

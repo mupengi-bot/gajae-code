@@ -1407,6 +1407,7 @@ export class AgentSession {
 					}
 				}
 			}
+			await this.#syncSkillPromptActiveStateSafely(event.message, true);
 		}
 
 		// Plan-mode → compaction transition: stamp `SILENT_ABORT_MARKER` on the
@@ -1754,15 +1755,14 @@ export class AgentSession {
 				},
 			});
 			if (this.#activeSkillState) {
-				await syncSkillActiveState({
-					cwd: this.sessionManager.getCwd(),
-					skill: this.#activeSkillState.skill,
-					active: false,
-					phase: "complete",
-					sessionId: this.#activeSkillState.sessionId,
-					source: "skill-prompt",
-				}).catch(() => {});
-				this.#activeSkillState = undefined;
+				const { skill, sessionId } = this.#activeSkillState;
+				await this.#syncSkillPromptActiveStateSafely(
+					{ customType: SKILL_PROMPT_MESSAGE_TYPE, details: { name: skill } },
+					false,
+				);
+				if (this.#activeSkillState?.skill === skill && this.#activeSkillState.sessionId === sessionId) {
+					this.#activeSkillState = undefined;
+				}
 			}
 			const fallbackAssistant = [...event.messages]
 				.reverse()
@@ -4050,6 +4050,19 @@ export class AgentSession {
 		this.#activeSkillState = active ? { skill: name, sessionId } : undefined;
 	}
 
+	async #syncSkillPromptActiveStateSafely(
+		message: Pick<CustomMessage<unknown>, "customType" | "details">,
+		active: boolean,
+	): Promise<void> {
+		try {
+			await this.#syncSkillPromptActiveState(message, active);
+		} catch {
+			// Skill HUD state is observational; a filesystem write failure must not
+			// interrupt the prompt turn it is visualizing. The native Stop hook still
+			// performs authoritative workflow blocking from persisted state.
+		}
+	}
+
 	async promptCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "attribution">,
 		options?: Pick<PromptOptions, "streamingBehavior" | "toolChoice">,
@@ -4080,11 +4093,11 @@ export class AgentSession {
 			timestamp: Date.now(),
 		};
 
-		await this.#syncSkillPromptActiveState(customMessage, true).catch(() => {});
+		await this.#syncSkillPromptActiveStateSafely(customMessage, true);
 		try {
 			await this.#promptWithMessage(customMessage, textContent, options);
 		} finally {
-			await this.#syncSkillPromptActiveState(customMessage, false).catch(() => {});
+			await this.#syncSkillPromptActiveStateSafely(customMessage, false);
 		}
 	}
 
@@ -4496,6 +4509,7 @@ export class AgentSession {
 
 		const prependMessages = queuedMessages.slice(0, -1);
 		const textContent = this.#getCustomMessageTextContent(message);
+		await this.#syncSkillPromptActiveStateSafely(message, true);
 		try {
 			await this.#promptWithMessage(message, textContent, {
 				prependMessages,
@@ -4504,6 +4518,8 @@ export class AgentSession {
 		} catch (error) {
 			this.#pendingNextTurnMessages = [...queuedMessages, ...this.#pendingNextTurnMessages];
 			throw error;
+		} finally {
+			await this.#syncSkillPromptActiveStateSafely(message, false);
 		}
 	}
 
@@ -4575,7 +4591,12 @@ export class AgentSession {
 					this.#queueHiddenNextTurnMessage(appMessage, false);
 					return;
 				}
-				await this.agent.prompt(appMessage);
+				await this.#syncSkillPromptActiveStateSafely(appMessage, true);
+				try {
+					await this.agent.prompt(appMessage);
+				} finally {
+					await this.#syncSkillPromptActiveStateSafely(appMessage, false);
+				}
 				return;
 			}
 			this.agent.appendMessage(appMessage);
@@ -4594,7 +4615,12 @@ export class AgentSession {
 				this.#queueHiddenNextTurnMessage(appMessage, false);
 				return;
 			}
-			await this.agent.prompt(appMessage);
+			await this.#syncSkillPromptActiveStateSafely(appMessage, true);
+			try {
+				await this.agent.prompt(appMessage);
+			} finally {
+				await this.#syncSkillPromptActiveStateSafely(appMessage, false);
+			}
 			return;
 		}
 
