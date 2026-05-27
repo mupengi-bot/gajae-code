@@ -132,6 +132,7 @@ export type ProviderDiscovery = z.infer<typeof ProviderDiscoverySchema>;
 const ProviderConfigSchema = z.object({
 	baseUrl: z.string().min(1).optional(),
 	apiKey: z.string().min(1).optional(),
+	apiKeyEnv: z.string().min(1).optional(),
 	api: z
 		.enum([
 			"openai-completions",

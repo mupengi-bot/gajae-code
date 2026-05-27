@@ -95,6 +95,37 @@ describe("ModelRegistry runtime provider registration", () => {
 		expect(registry.find(providerName, modelId)?.headers?.[headerName]).toBe(headerValue);
 	}
 
+	test("loads custom provider API keys from typed apiKeyEnv without falling back to the env var name", async () => {
+		const keyEnv = `GJC_TEST_PROVIDER_KEY_${Snowflake.next()}`;
+		process.env[keyEnv] = "resolved-env-secret";
+		await Bun.write(
+			modelsJsonPath,
+			JSON.stringify({
+				providers: {
+					envProvider: {
+						baseUrl: "https://api.example.test/v1",
+						api: "openai-responses",
+						apiKeyEnv: keyEnv,
+						models: [{ id: "env-model" }],
+					},
+				},
+			}),
+		);
+		try {
+			const registry = new ModelRegistry(authStorage, modelsJsonPath);
+			const model = registry.find("envProvider", "env-model");
+			expect(model).toBeDefined();
+			expect(await registry.getApiKeyForProvider("envProvider")).toBe("resolved-env-secret");
+
+			delete process.env[keyEnv];
+			authStorage.clearConfigApiKeys();
+			const missingEnvRegistry = new ModelRegistry(authStorage, modelsJsonPath);
+			expect(await missingEnvRegistry.getApiKeyForProvider("envProvider")).toBeUndefined();
+		} finally {
+			delete process.env[keyEnv];
+		}
+	});
+
 	test("validates provider config before mutating custom API state", () => {
 		const registry = new ModelRegistry(authStorage, modelsJsonPath);
 		const beforeAnthropicCount = registry.getAll().filter(model => model.provider === "anthropic").length;

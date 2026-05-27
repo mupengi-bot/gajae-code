@@ -5,7 +5,7 @@ import { Args, Command, Flags, renderCommandHelp } from "@gajae-code/utils/cli";
 import { runSetupCommand, type SetupCommandArgs, type SetupComponent } from "../cli/setup-cli";
 import { initTheme } from "../modes/theme/theme";
 
-const COMPONENTS: SetupComponent[] = ["defaults", "python", "stt"];
+const COMPONENTS: SetupComponent[] = ["defaults", "provider", "python", "stt"];
 
 export default class Setup extends Command {
 	static description = "Install dependencies for optional features";
@@ -22,6 +22,13 @@ export default class Setup extends Command {
 		check: Flags.boolean({ char: "c", description: "Check if dependencies are installed" }),
 		force: Flags.boolean({ char: "f", description: "Overwrite existing default definition files" }),
 		json: Flags.boolean({ description: "Output status as JSON" }),
+		compat: Flags.string({ description: "Provider compatibility: openai or anthropic" }),
+		provider: Flags.string({ description: "Provider id to add to models.yml" }),
+		"base-url": Flags.string({ description: "Provider API base URL" }),
+		"api-key": Flags.string({ description: "Provider API key" }),
+		"api-key-env": Flags.string({ description: "Read provider API key from this environment variable" }),
+		model: Flags.string({ description: "Model id to add (repeat or comma-separate)", multiple: true }),
+		"models-path": Flags.string({ description: "Override models config path" }),
 	};
 
 	async run(): Promise<void> {
@@ -36,6 +43,13 @@ export default class Setup extends Command {
 				json: flags.json,
 				check: flags.check,
 				force: flags.force,
+				compat: flags.compat,
+				provider: flags.provider,
+				baseUrl: flags["base-url"],
+				apiKey: flags["api-key"],
+				apiKeyEnv: flags["api-key-env"],
+				model: flags.model,
+				modelsPath: flags["models-path"],
 			},
 		};
 		await initTheme();

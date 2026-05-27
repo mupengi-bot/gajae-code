@@ -21,6 +21,11 @@ import {
 } from "../extensibility/plugins/marketplace";
 import { resolveMemoryBackend } from "../memory-backend";
 import type { InteractiveModeContext } from "../modes/types";
+import {
+	addApiCompatibleProvider,
+	formatProviderSetupResult,
+	parseProviderCompatibility,
+} from "../setup/provider-onboarding";
 import { getChangelogPath, parseChangelog } from "../utils/changelog";
 import { buildContextReportText } from "./helpers/context-report";
 import { formatDuration } from "./helpers/format";
@@ -43,6 +48,68 @@ export type { BuiltinSlashCommand, SubcommandDef } from "./types";
 
 /** TUI-specific runtime accepted by `executeBuiltinSlashCommand`. */
 export type BuiltinSlashCommandRuntime = TuiSlashCommandRuntime;
+
+function parseProviderSetupSlashArgs(args: string): {
+	compat?: string;
+	provider?: string;
+	baseUrl?: string;
+	apiKey?: string;
+	apiKeyEnv?: string;
+	force: boolean;
+	models: string[];
+} {
+	const tokens = args.split(/\s+/).filter(Boolean);
+	const result: {
+		compat?: string;
+		provider?: string;
+		baseUrl?: string;
+		apiKey?: string;
+		apiKeyEnv?: string;
+		force: boolean;
+		models: string[];
+	} = {
+		force: false,
+		models: [],
+	};
+	for (let i = 0; i < tokens.length; i++) {
+		const token = tokens[i];
+		if (token === "--force" || token === "-f") {
+			result.force = true;
+			continue;
+		}
+		const value = tokens[i + 1];
+		if (!value) continue;
+		if (token === "--compat") {
+			result.compat = value;
+			i += 1;
+		} else if (token === "--provider") {
+			result.provider = value;
+			i += 1;
+		} else if (token === "--base-url") {
+			result.baseUrl = value;
+			i += 1;
+		} else if (token === "--api-key") {
+			result.apiKey = value;
+			i += 1;
+		} else if (token === "--api-key-env") {
+			result.apiKeyEnv = value;
+			i += 1;
+		} else if (token === "--model" || token === "--models") {
+			result.models.push(value);
+			i += 1;
+		}
+	}
+	return result;
+}
+
+function providerSetupUsage(): string {
+	return [
+		"Provider onboarding",
+		"API providers: /provider add --compat <openai|anthropic> --provider <id> --base-url <url> --api-key-env <ENV> --model <model> [--force]",
+		"OAuth/subscription providers: /provider login [provider-id] or /login [provider-id]",
+		"Headless OAuth callbacks can be pasted with /login <redirect URL or code>.",
+	].join("\n");
+}
 
 function refreshStatusLine(ctx: InteractiveModeContext): void {
 	ctx.statusLine.invalidate();
@@ -630,6 +697,83 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		description: "Navigate session tree (switch branches)",
 		handleTui: (_command, runtime) => {
 			runtime.ctx.showTreeSelector();
+			runtime.ctx.editor.setText("");
+		},
+	},
+
+	{
+		name: "provider",
+		description: "Set up API-compatible providers or login providers",
+		inlineHint: "add|login",
+		allowArgs: true,
+		handle: async (command, runtime) => {
+			const args = command.args.trim();
+			if (!args || args === "help") {
+				await runtime.output(providerSetupUsage());
+				return commandConsumed();
+			}
+			if (args === "login" || args.startsWith("login ")) {
+				await runtime.output(
+					"Use the terminal UI /login selector for browser, device-code, or manual callback provider login.",
+				);
+				return commandConsumed();
+			}
+			if (!args.startsWith("add ")) return usage(providerSetupUsage(), runtime);
+			const parsed = parseProviderSetupSlashArgs(args.slice(4));
+			const missing: string[] = [];
+			if (!parsed.compat) missing.push("--compat");
+			if (!parsed.provider) missing.push("--provider");
+			if (!parsed.baseUrl) missing.push("--base-url");
+			if (!parsed.apiKey && !parsed.apiKeyEnv) missing.push("--api-key or --api-key-env");
+			if (parsed.models.length === 0) missing.push("--model");
+			if (missing.length > 0) return usage(`Missing required option(s): ${missing.join(", ")}`, runtime);
+			try {
+				const result = await addApiCompatibleProvider({
+					compatibility: parseProviderCompatibility(parsed.compat!),
+					providerId: parsed.provider!,
+					baseUrl: parsed.baseUrl!,
+					apiKey: parsed.apiKey,
+					apiKeyEnv: parsed.apiKeyEnv,
+					models: parsed.models,
+					force: parsed.force,
+				});
+				await runtime.session.modelRegistry.refresh("offline");
+				await runtime.output(formatProviderSetupResult(result));
+				await runtime.notifyConfigChanged?.();
+				return commandConsumed();
+			} catch (err) {
+				return usage(`Provider setup failed: ${errorMessage(err)}`, runtime);
+			}
+		},
+		handleTui: async (command, runtime) => {
+			const args = command.args.trim();
+			if (args === "login" || args.startsWith("login ")) {
+				const providerId = args.slice("login".length).trim() || undefined;
+				await runtime.ctx.showOAuthSelector("login", providerId);
+				runtime.ctx.editor.setText("");
+				return;
+			}
+			if (args.startsWith("add ")) {
+				const parsed = parseProviderSetupSlashArgs(args.slice(4));
+				try {
+					const result = await addApiCompatibleProvider({
+						compatibility: parseProviderCompatibility(parsed.compat ?? ""),
+						providerId: parsed.provider ?? "",
+						baseUrl: parsed.baseUrl ?? "",
+						apiKey: parsed.apiKey,
+						apiKeyEnv: parsed.apiKeyEnv,
+						models: parsed.models,
+						force: parsed.force,
+					});
+					await runtime.ctx.session.modelRegistry.refresh("offline");
+					runtime.ctx.showStatus(formatProviderSetupResult(result));
+				} catch (err) {
+					runtime.ctx.showError(`Provider setup failed: ${errorMessage(err)}`);
+				}
+				runtime.ctx.editor.setText("");
+				return;
+			}
+			runtime.ctx.showStatus(providerSetupUsage());
 			runtime.ctx.editor.setText("");
 		},
 	},

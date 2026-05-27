@@ -140,6 +140,7 @@ interface ProviderValidationConfig {
 	baseUrl?: string;
 	headers?: Record<string, string>;
 	apiKey?: string;
+	apiKeyEnv?: string;
 	api?: Api;
 	auth?: ProviderAuthMode;
 	oauthConfigured?: boolean;
@@ -166,6 +167,7 @@ function validateProviderConfiguration(
 				!config.headers &&
 				!config.compat &&
 				!config.apiKey &&
+				!config.apiKeyEnv &&
 				!config.disableStrictTools &&
 				!hasModelOverrides &&
 				!config.discovery
@@ -182,12 +184,12 @@ function validateProviderConfiguration(
 		const requiresAuth =
 			mode === "runtime-register"
 				? !config.apiKey && !config.oauthConfigured
-				: !config.apiKey && (config.auth ?? "apiKey") !== "none";
+				: !config.apiKey && !config.apiKeyEnv && (config.auth ?? "apiKey") !== "none";
 		if (requiresAuth) {
 			throw new Error(
 				mode === "runtime-register"
 					? `Provider ${providerName}: "apiKey" or "oauth" is required when defining models.`
-					: `Provider ${providerName}: "apiKey" is required when defining custom models unless auth is "none".`,
+					: `Provider ${providerName}: "apiKey" or "apiKeyEnv" is required when defining custom models unless auth is "none".`,
 			);
 		}
 	}
@@ -228,6 +230,7 @@ export const ModelsConfigFile = new ConfigFile<ModelsConfig>("models", ModelsCon
 					baseUrl: providerConfig.baseUrl,
 					headers: providerConfig.headers,
 					apiKey: providerConfig.apiKey,
+					apiKeyEnv: providerConfig.apiKeyEnv,
 					api: providerConfig.api as Api | undefined,
 					auth: (providerConfig.auth ?? "apiKey") as ProviderAuthMode,
 					discovery: providerConfig.discovery as ProviderDiscovery | undefined,
@@ -376,6 +379,11 @@ function resolveApiKeyConfig(keyConfig: string): string | undefined {
 	const envValue = Bun.env[keyConfig];
 	if (envValue) return envValue;
 	return keyConfig;
+}
+
+function resolveApiKeyEnvConfig(envKey: string | undefined): string | undefined {
+	if (!envKey) return undefined;
+	return Bun.env[envKey];
 }
 
 function toPositiveNumberOrUndefined(value: unknown): number | undefined {
@@ -792,10 +800,7 @@ export class ModelRegistry {
 		// Set up fallback resolver for custom provider API keys
 		this.authStorage.setFallbackResolver(provider => {
 			const keyConfig = this.#customProviderApiKeys.get(provider);
-			if (keyConfig) {
-				return resolveApiKeyConfig(keyConfig);
-			}
-			return undefined;
+			return keyConfig;
 		});
 		// Load models synchronously in constructor
 		this.#loadModels();
@@ -1152,11 +1157,13 @@ export class ModelRegistry {
 		const configuredProviders = new Set(Object.keys(value.providers ?? {}));
 
 		for (const [providerName, providerConfig] of providerEntries) {
+			const providerApiKeyConfig = providerConfig.apiKey ?? resolveApiKeyEnvConfig(providerConfig.apiKeyEnv);
 			// Always set overrides when baseUrl/headers/apiKey/authHeader/compat/disableStrictTools/transport are present
 			if (
 				providerConfig.baseUrl ||
 				providerConfig.headers ||
 				providerConfig.apiKey ||
+				providerConfig.apiKeyEnv ||
 				providerConfig.authHeader !== undefined ||
 				providerConfig.compat ||
 				providerConfig.disableStrictTools ||
@@ -1166,7 +1173,7 @@ export class ModelRegistry {
 				overrides.set(providerName, {
 					baseUrl: providerConfig.baseUrl,
 					headers: providerConfig.headers,
-					apiKey: providerConfig.apiKey,
+					apiKey: providerApiKeyConfig,
 					authHeader: providerConfig.authHeader,
 					compat: mergeCompat(providerConfig.compat, disableStrictCompat),
 					transport: providerConfig.transport,
@@ -1194,9 +1201,13 @@ export class ModelRegistry {
 			// so it wins over OAuth tokens from the broker — when the user pins a
 			// bearer in models.yml (e.g. for an auth-gateway baseUrl), that bearer
 			// must authenticate the outbound request.
-			if (providerConfig.apiKey) {
-				this.#customProviderApiKeys.set(providerName, providerConfig.apiKey);
-				const resolved = resolveApiKeyConfig(providerConfig.apiKey);
+			if (providerConfig.apiKey || providerConfig.apiKeyEnv) {
+				const resolved = providerConfig.apiKeyEnv
+					? resolveApiKeyEnvConfig(providerConfig.apiKeyEnv)
+					: providerConfig.apiKey
+						? resolveApiKeyConfig(providerConfig.apiKey)
+						: undefined;
+				if (resolved) this.#customProviderApiKeys.set(providerName, resolved);
 				if (resolved) this.authStorage.setConfigApiKey(providerName, resolved);
 			}
 
@@ -1869,9 +1880,13 @@ export class ModelRegistry {
 		for (const [providerName, providerConfig] of Object.entries(config.providers ?? {})) {
 			const modelDefs = providerConfig.models ?? [];
 			if (modelDefs.length === 0) continue; // Override-only, no custom models
-			if (providerConfig.apiKey) {
-				this.#customProviderApiKeys.set(providerName, providerConfig.apiKey);
-				const resolved = resolveApiKeyConfig(providerConfig.apiKey);
+			if (providerConfig.apiKey || providerConfig.apiKeyEnv) {
+				const resolved = providerConfig.apiKeyEnv
+					? resolveApiKeyEnvConfig(providerConfig.apiKeyEnv)
+					: providerConfig.apiKey
+						? resolveApiKeyConfig(providerConfig.apiKey)
+						: undefined;
+				if (resolved) this.#customProviderApiKeys.set(providerName, resolved);
 				if (resolved) this.authStorage.setConfigApiKey(providerName, resolved);
 			}
 			for (const modelDef of modelDefs) {
@@ -1883,7 +1898,7 @@ export class ModelRegistry {
 					providerConfig.baseUrl!,
 					providerConfig.api as Api | undefined,
 					providerConfig.headers,
-					providerConfig.apiKey,
+					providerConfig.apiKeyEnv ? resolveApiKeyEnvConfig(providerConfig.apiKeyEnv) : providerConfig.apiKey,
 					providerConfig.authHeader,
 					providerCompat,
 					(providerConfig.auth as ProviderAuthMode | undefined) ?? undefined,

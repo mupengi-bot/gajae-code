@@ -9,8 +9,13 @@ import { $ } from "bun";
 import chalk from "chalk";
 import { installDefaultGjcDefinitions } from "../defaults/gjc-defaults";
 import { theme } from "../modes/theme/theme";
+import {
+	addApiCompatibleProvider,
+	formatProviderSetupResult,
+	parseProviderCompatibility,
+} from "../setup/provider-onboarding";
 
-export type SetupComponent = "defaults" | "python" | "stt";
+export type SetupComponent = "defaults" | "provider" | "python" | "stt";
 
 export interface SetupCommandArgs {
 	component: SetupComponent;
@@ -18,10 +23,17 @@ export interface SetupCommandArgs {
 		json?: boolean;
 		check?: boolean;
 		force?: boolean;
+		compat?: string;
+		provider?: string;
+		baseUrl?: string;
+		apiKey?: string;
+		apiKeyEnv?: string;
+		model?: string[];
+		modelsPath?: string;
 	};
 }
 
-const VALID_COMPONENTS: SetupComponent[] = ["defaults", "python", "stt"];
+const VALID_COMPONENTS: SetupComponent[] = ["defaults", "provider", "python", "stt"];
 
 const MANAGED_PYTHON_ENV = getPythonEnvDir();
 
@@ -56,6 +68,20 @@ export function parseSetupArgs(args: string[]): SetupCommandArgs | undefined {
 			flags.check = true;
 		} else if (arg === "--force" || arg === "-f") {
 			flags.force = true;
+		} else if (arg === "--compat") {
+			flags.compat = args[++i];
+		} else if (arg === "--provider") {
+			flags.provider = args[++i];
+		} else if (arg === "--base-url") {
+			flags.baseUrl = args[++i];
+		} else if (arg === "--api-key") {
+			flags.apiKey = args[++i];
+		} else if (arg === "--api-key-env") {
+			flags.apiKeyEnv = args[++i];
+		} else if (arg === "--model" || arg === "--models") {
+			flags.model = [...(flags.model ?? []), args[++i] ?? ""];
+		} else if (arg === "--models-path") {
+			flags.modelsPath = args[++i];
 		}
 	}
 
@@ -118,12 +144,64 @@ export async function runSetupCommand(cmd: SetupCommandArgs): Promise<void> {
 		case "defaults":
 			await handleDefaultsSetup(cmd.flags);
 			break;
+		case "provider":
+			await handleProviderSetup(cmd.flags);
+			break;
 		case "python":
 			await handlePythonSetup(cmd.flags);
 			break;
 		case "stt":
 			await handleSttSetup(cmd.flags);
 			break;
+	}
+}
+
+async function handleProviderSetup(flags: {
+	json?: boolean;
+	force?: boolean;
+	compat?: string;
+	provider?: string;
+	baseUrl?: string;
+	apiKey?: string;
+	apiKeyEnv?: string;
+	model?: string[];
+	modelsPath?: string;
+}): Promise<void> {
+	try {
+		const missing: string[] = [];
+		if (!flags.compat) missing.push("--compat");
+		if (!flags.provider) missing.push("--provider");
+		if (!flags.baseUrl) missing.push("--base-url");
+		if (!flags.apiKey && !flags.apiKeyEnv) missing.push("--api-key or --api-key-env");
+		if (!flags.model || flags.model.length === 0) missing.push("--model");
+		if (missing.length > 0) {
+			throw new Error(`Missing required provider setup option(s): ${missing.join(", ")}`);
+		}
+		const result = await addApiCompatibleProvider({
+			compatibility: parseProviderCompatibility(flags.compat!),
+			providerId: flags.provider!,
+			baseUrl: flags.baseUrl!,
+			apiKey: flags.apiKey,
+			apiKeyEnv: flags.apiKeyEnv,
+			models: flags.model!,
+			modelsPath: flags.modelsPath,
+			force: flags.force,
+		});
+		if (flags.json) {
+			process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+			return;
+		}
+		process.stdout.write(`${chalk.green(`${theme.status.success} Provider configured`)}\n`);
+		process.stdout.write(`${chalk.dim(formatProviderSetupResult(result))}\n`);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (flags.json) {
+			process.stdout.write(`${JSON.stringify({ ok: false, error: message }, null, 2)}\n`);
+		} else {
+			process.stderr.write(`${chalk.red(`${theme.status.error} Provider setup failed`)}\n`);
+			process.stderr.write(`${chalk.dim(message)}\n`);
+		}
+		process.exit(1);
 	}
 }
 
@@ -253,8 +331,12 @@ ${chalk.bold("Usage:")}
 
 ${chalk.bold("Components:")}
   defaults  Install bundled GJC default skills and agents
+  provider  Add an OpenAI-compatible or Anthropic-compatible API provider
   python    Verify a Python 3 interpreter is reachable for code execution
   stt       Install speech-to-text dependencies (openai-whisper, recording tools)
+
+${chalk.bold("Provider example:")}
+  MY_PROVIDER_KEY=sk-... ${APP_NAME} setup provider --compat openai --provider my-oai --base-url https://api.example.com/v1 --api-key-env MY_PROVIDER_KEY --model gpt-example
 
 ${chalk.bold("Options:")}
   -c, --check   Check if dependencies are installed without installing

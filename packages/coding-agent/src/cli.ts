@@ -36,6 +36,7 @@ const commands: CommandEntry[] = [
 	{ name: "ultragoal", load: () => import("./commands/ultragoal").then(m => m.default) },
 	{ name: "ralplan", load: () => import("./commands/ralplan").then(m => m.default) },
 	{ name: "deep-interview", load: () => import("./commands/deep-interview").then(m => m.default) },
+	{ name: "setup", load: () => import("./commands/setup").then(m => m.default) },
 	{ name: "launch", load: () => import("./commands/launch").then(m => m.default) },
 ];
 

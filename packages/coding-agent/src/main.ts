@@ -879,6 +879,14 @@ export async function runRootCommand(
 			notifs.push({ kind: "error", message: modelRegistryError.message });
 		}
 
+		if (isInteractive && !session.model) {
+			notifs.push({
+				kind: "info",
+				message:
+					"No usable model is configured yet. Run /provider for API-compatible setup or /login for OAuth/subscription providers.",
+			});
+		}
+
 		applyExtensionFlagValues(session, rawArgs);
 
 		if (!isInteractive && !session.model) {
