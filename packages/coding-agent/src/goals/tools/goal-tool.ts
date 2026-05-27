@@ -5,7 +5,10 @@ import { formatNumber, prompt } from "@gajae-code/utils";
 import * as z from "zod/v4";
 import type { RenderResultOptions } from "../../extensibility/custom-tools/types";
 import type { Theme, ThemeColor } from "../../modes/theme/theme";
+import createGoalDescription from "../../prompts/tools/create-goal.md" with { type: "text" };
+import getGoalDescription from "../../prompts/tools/get-goal.md" with { type: "text" };
 import goalDescription from "../../prompts/tools/goal.md" with { type: "text" };
+import updateGoalDescription from "../../prompts/tools/update-goal.md" with { type: "text" };
 import { formatDuration } from "../../slash-commands/helpers/format";
 import type { ToolSession } from "../../tools";
 import { formatErrorMessage, TRUNCATE_LENGTHS } from "../../tools/render-utils";
@@ -20,7 +23,21 @@ const goalSchema = z.object({
 	token_budget: z.number().int().describe("token budget").optional(),
 });
 
+const getGoalSchema = z.object({});
+
+const createGoalSchema = z.object({
+	objective: z.string().describe("goal objective"),
+	token_budget: z.number().int().describe("token budget").optional(),
+});
+
+const updateGoalSchema = z.object({
+	status: z.enum(["complete", "dropped"]).describe("new goal status"),
+});
+
 export type GoalToolInput = z.infer<typeof goalSchema>;
+export type GetGoalToolInput = z.infer<typeof getGoalSchema>;
+export type CreateGoalToolInput = z.infer<typeof createGoalSchema>;
+export type UpdateGoalToolInput = z.infer<typeof updateGoalSchema>;
 
 export interface GoalToolResponse {
 	goal: Goal | null;
@@ -43,7 +60,10 @@ export function buildGoalToolResponse(
 	};
 }
 
-function validateCreateParams(params: GoalToolInput): { objective: string; tokenBudget?: number } {
+function validateCreateParams(params: { objective?: string; token_budget?: number }): {
+	objective: string;
+	tokenBudget?: number;
+} {
 	const objective = params.objective?.trim();
 	if (!objective) {
 		throw new ToolError("objective is required when op=create");
@@ -53,6 +73,34 @@ function validateCreateParams(params: GoalToolInput): { objective: string; token
 		throw new ToolError("token_budget must be a positive integer when provided");
 	}
 	return { objective, tokenBudget };
+}
+
+function renderGoalToolResponse(response: GoalToolResponse): string {
+	if (!response.goal) return "No active goal.";
+
+	let text = `Goal: ${response.goal.objective}\nStatus: ${response.goal.status}\nTokens: ${response.goal.tokensUsed} used`;
+	if (response.goal.tokenBudget !== undefined) {
+		text += ` / ${response.goal.tokenBudget} budget`;
+	}
+	if (response.remainingTokens !== null) {
+		text += `\nRemaining tokens: ${response.remainingTokens}`;
+	}
+	if (response.completionBudgetReport) {
+		text += `\n\n${response.completionBudgetReport}`;
+	}
+	return text;
+}
+
+function buildGoalToolResult(op: GoalToolDetails["op"], response: GoalToolResponse): AgentToolResult<GoalToolDetails> {
+	return {
+		content: [{ type: "text", text: renderGoalToolResponse(response) }],
+		details: {
+			op,
+			goal: response.goal,
+			remainingTokens: response.remainingTokens,
+			completionBudgetReport: response.completionBudgetReport,
+		},
+	};
 }
 
 export class GoalTool implements AgentTool<typeof goalSchema, GoalToolDetails> {
@@ -97,30 +145,106 @@ export class GoalTool implements AgentTool<typeof goalSchema, GoalToolDetails> {
 			const completed = await runtime.completeGoalFromTool();
 			response = buildGoalToolResponse(completed, { includeCompletionReport: true });
 		}
-		let text: string;
-		if (response.goal) {
-			text = `Goal: ${response.goal.objective}\nStatus: ${response.goal.status}\nTokens: ${response.goal.tokensUsed} used`;
-			if (response.goal.tokenBudget !== undefined) {
-				text += ` / ${response.goal.tokenBudget} budget`;
-			}
-			if (response.remainingTokens !== null) {
-				text += `\nRemaining tokens: ${response.remainingTokens}`;
-			}
-			if (response.completionBudgetReport) {
-				text += `\n\n${response.completionBudgetReport}`;
-			}
-		} else {
-			text = "No active goal.";
+		return buildGoalToolResult(params.op, response);
+	}
+}
+
+export class GetGoalTool implements AgentTool<typeof getGoalSchema, GoalToolDetails> {
+	readonly name = "get_goal";
+	readonly label = "Get Goal";
+	readonly description = prompt.render(getGoalDescription);
+	readonly parameters = getGoalSchema;
+	readonly strict = true;
+	readonly intent = "omit" as const;
+	readonly #session: ToolSession;
+
+	static createIf(session: ToolSession): GetGoalTool | null {
+		return session.getGoalModeState || session.getGoalRuntime ? new GetGoalTool(session) : null;
+	}
+
+	constructor(session: ToolSession) {
+		this.#session = session;
+	}
+
+	async execute(
+		_toolCallId: string,
+		_params: GetGoalToolInput,
+		_signal?: AbortSignal,
+		_onUpdate?: AgentToolUpdateCallback<GoalToolDetails>,
+		_context?: AgentToolContext,
+	): Promise<AgentToolResult<GoalToolDetails>> {
+		const state = this.#session.getGoalModeState?.();
+		return buildGoalToolResult("get", buildGoalToolResponse(state?.goal ?? null));
+	}
+}
+
+export class CreateGoalTool implements AgentTool<typeof createGoalSchema, GoalToolDetails> {
+	readonly name = "create_goal";
+	readonly label = "Create Goal";
+	readonly description = prompt.render(createGoalDescription);
+	readonly parameters = createGoalSchema;
+	readonly strict = true;
+	readonly intent = "omit" as const;
+	readonly #session: ToolSession;
+
+	static createIf(session: ToolSession): CreateGoalTool | null {
+		return session.getGoalRuntime ? new CreateGoalTool(session) : null;
+	}
+
+	constructor(session: ToolSession) {
+		this.#session = session;
+	}
+
+	async execute(
+		_toolCallId: string,
+		params: CreateGoalToolInput,
+		_signal?: AbortSignal,
+		_onUpdate?: AgentToolUpdateCallback<GoalToolDetails>,
+		_context?: AgentToolContext,
+	): Promise<AgentToolResult<GoalToolDetails>> {
+		const runtime = this.#session.getGoalRuntime?.();
+		if (!runtime) {
+			throw new ToolError("Goal mode is not active.");
 		}
-		return {
-			content: [{ type: "text", text }],
-			details: {
-				op: params.op,
-				goal: response.goal,
-				remainingTokens: response.remainingTokens,
-				completionBudgetReport: response.completionBudgetReport,
-			},
-		};
+		const created = await runtime.createGoal(validateCreateParams(params));
+		return buildGoalToolResult("create", buildGoalToolResponse(created.goal));
+	}
+}
+
+export class UpdateGoalTool implements AgentTool<typeof updateGoalSchema, GoalToolDetails> {
+	readonly name = "update_goal";
+	readonly label = "Update Goal";
+	readonly description = prompt.render(updateGoalDescription);
+	readonly parameters = updateGoalSchema;
+	readonly strict = true;
+	readonly intent = "omit" as const;
+	readonly #session: ToolSession;
+
+	static createIf(session: ToolSession): UpdateGoalTool | null {
+		return session.getGoalRuntime ? new UpdateGoalTool(session) : null;
+	}
+
+	constructor(session: ToolSession) {
+		this.#session = session;
+	}
+
+	async execute(
+		_toolCallId: string,
+		params: UpdateGoalToolInput,
+		_signal?: AbortSignal,
+		_onUpdate?: AgentToolUpdateCallback<GoalToolDetails>,
+		_context?: AgentToolContext,
+	): Promise<AgentToolResult<GoalToolDetails>> {
+		const runtime = this.#session.getGoalRuntime?.();
+		if (!runtime) {
+			throw new ToolError("Goal mode is not active.");
+		}
+		if (params.status === "dropped") {
+			const dropped = await runtime.dropGoal();
+			return buildGoalToolResult("drop", buildGoalToolResponse(dropped ?? null));
+		}
+		const completed = await runtime.completeGoalFromTool();
+		return buildGoalToolResult("complete", buildGoalToolResponse(completed, { includeCompletionReport: true }));
 	}
 }
 

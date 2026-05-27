@@ -128,6 +128,7 @@ describe("InteractiveMode goal mode integration", () => {
 		expect(harness.mode.goalModePaused).toBe(true);
 		expect(harness.session.getGoalModeState()?.goal.status).toBe("paused");
 		expect(await toolNamesFor(harness)).not.toContain("goal");
+		expect(await toolNamesFor(harness)).toEqual(expect.arrayContaining(["get_goal", "create_goal", "update_goal"]));
 	});
 
 	it("replaces the active goal via /goal set", async () => {

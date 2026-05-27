@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "bun:test";
 import { completionBudgetReport, GoalRuntime } from "@gajae-code/coding-agent/goals/runtime";
 import type { Goal, GoalModeState, GoalTokenUsage } from "@gajae-code/coding-agent/goals/state";
-import { GoalTool } from "@gajae-code/coding-agent/goals/tools/goal-tool";
+import { CreateGoalTool, GetGoalTool, GoalTool, UpdateGoalTool } from "@gajae-code/coding-agent/goals/tools/goal-tool";
 import type { ToolSession } from "@gajae-code/coding-agent/tools";
 
 function createUsage(overrides: Partial<GoalTokenUsage> = {}): GoalTokenUsage {
@@ -302,5 +302,62 @@ describe("GoalTool", () => {
 		expect(result.details?.op).toBe("drop");
 		expect(result.details?.goal?.status).toBe("dropped");
 		expect(harness.getState()).toBeUndefined();
+	});
+
+	it("exposes Codex-compatible get_goal/create_goal/update_goal tools", async () => {
+		const harness = createRuntimeHarness();
+		const session = createToolSession({
+			getGoalRuntime: () => harness.runtime,
+			getGoalModeState: () => harness.getState(),
+		});
+
+		const created = await new CreateGoalTool(session).execute("call-create-goal", {
+			objective: "  Ship ultragoal lifecycle  ",
+			token_budget: 20,
+		});
+		expect(created.details).toMatchObject({
+			op: "create",
+			goal: { objective: "Ship ultragoal lifecycle", status: "active", tokenBudget: 20 },
+			remainingTokens: 20,
+		});
+
+		const fetched = await new GetGoalTool(session).execute("call-get-goal", {});
+		expect(fetched.details).toMatchObject({
+			op: "get",
+			goal: { objective: "Ship ultragoal lifecycle", status: "active", tokenBudget: 20 },
+			remainingTokens: 20,
+		});
+
+		const completed = await new UpdateGoalTool(session).execute("call-update-goal", { status: "complete" });
+		expect(completed.details).toMatchObject({
+			op: "complete",
+			goal: { objective: "Ship ultragoal lifecycle", status: "complete", tokenBudget: 20 },
+			remainingTokens: 20,
+		});
+		expect(completed.details?.completionBudgetReport).toBe(
+			"Goal achieved. Report final budget usage to the user: tokens used: 0 of 20.",
+		);
+		expect(harness.getState()?.enabled).toBe(false);
+	});
+
+	it("shares the same session goal state between legacy goal and Codex-compatible tools", async () => {
+		const harness = createRuntimeHarness();
+		const session = createToolSession({
+			getGoalRuntime: () => harness.runtime,
+			getGoalModeState: () => harness.getState(),
+		});
+
+		await new GoalTool(session).execute("call-legacy-create", {
+			op: "create",
+			objective: "Shared state",
+		});
+		const fetchedByNamedTool = await new GetGoalTool(session).execute("call-get-goal", {});
+		expect(fetchedByNamedTool.details?.goal?.objective).toBe("Shared state");
+		expect(fetchedByNamedTool.details?.goal?.status).toBe("active");
+
+		await new UpdateGoalTool(session).execute("call-update-goal", { status: "complete" });
+		const fetchedByLegacyTool = await new GoalTool(session).execute("call-legacy-get", { op: "get" });
+		expect(fetchedByLegacyTool.details?.goal?.objective).toBe("Shared state");
+		expect(fetchedByLegacyTool.details?.goal?.status).toBe("complete");
 	});
 });

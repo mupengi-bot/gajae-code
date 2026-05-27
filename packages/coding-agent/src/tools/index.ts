@@ -7,7 +7,7 @@ import { EditTool } from "../edit";
 import { checkPythonKernelAvailability } from "../eval/py/kernel";
 import type { Skill } from "../extensibility/skills";
 import type { GoalModeState, GoalRuntime } from "../goals";
-import { GoalTool } from "../goals/tools/goal-tool";
+import { CreateGoalTool, GetGoalTool, GoalTool, UpdateGoalTool } from "../goals/tools/goal-tool";
 import type { HindsightSessionState } from "../hindsight/state";
 import { LspTool } from "../lsp";
 import type { PlanModeState } from "../plan-mode/state";
@@ -310,11 +310,16 @@ export const BUILTIN_TOOLS: Record<string, ToolFactory> = {
 	reflect: HindsightReflectTool.createIf,
 };
 
+const GOAL_MODE_TOOL_NAMES = ["get_goal", "create_goal", "update_goal"] as const;
+
 export const HIDDEN_TOOLS: Record<string, ToolFactory> = {
 	yield: s => new YieldTool(s),
 	report_finding: () => reportFindingTool,
 	resolve: s => new ResolveTool(s),
 	goal: s => new GoalTool(s),
+	get_goal: GetGoalTool.createIf,
+	create_goal: CreateGoalTool.createIf,
+	update_goal: UpdateGoalTool.createIf,
 };
 
 export type ToolName = keyof typeof BUILTIN_TOOLS;
@@ -365,8 +370,14 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 		toolNames && toolNames.length > 0 ? [...new Set(toolNames.map(name => name.toLowerCase()))] : undefined;
 	const goalEnabled = session.settings.get("goal.enabled");
 	const goalModeActive = goalEnabled && session.getGoalModeState?.()?.enabled === true;
+	const goalStateToolNames = [...GOAL_MODE_TOOL_NAMES];
 	if (goalModeActive && requestedTools && !requestedTools.includes("goal")) {
 		requestedTools = [...requestedTools, "goal"];
+	}
+	if (goalEnabled && requestedTools) {
+		for (const name of goalStateToolNames) {
+			if (!requestedTools.includes(name)) requestedTools.push(name);
+		}
 	}
 	const backends = resolveEvalBackends(session);
 	const allowPython = backends.python;
@@ -440,6 +451,7 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 	const allTools: Record<string, ToolFactory> = { ...BUILTIN_TOOLS, ...HIDDEN_TOOLS };
 	const isToolAllowed = (name: string) => {
 		if (name === "goal") return goalEnabled && goalModeActive;
+		if (goalStateToolNames.includes(name as (typeof GOAL_MODE_TOOL_NAMES)[number])) return goalEnabled;
 		if (name === "lsp") return enableLsp && session.settings.get("lsp.enabled");
 		if (name === "bash") return true;
 		if (name === "eval") return allowEval;
@@ -488,6 +500,7 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 						.filter(([name]) => isToolAllowed(name))
 						.map(([name, factory]) => [name, factory] as const),
 					...(includeYield ? ([["yield", HIDDEN_TOOLS.yield]] as const) : []),
+					...(goalEnabled ? goalStateToolNames.map(name => [name, HIDDEN_TOOLS[name]] as const) : []),
 					...(goalModeActive ? ([["goal", HIDDEN_TOOLS.goal]] as const) : []),
 				];
 
