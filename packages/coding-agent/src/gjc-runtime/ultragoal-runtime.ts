@@ -303,6 +303,26 @@ async function readStructuredValue(cwd: string, value: string): Promise<unknown>
 		throw error;
 	}
 }
+function qualityGateObject(value: unknown): JsonObject | null {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as JsonObject) : null;
+}
+
+async function readRequiredCompletionQualityGate(cwd: string, value: string | undefined): Promise<unknown> {
+	if (!value?.trim()) {
+		throw new Error(
+			"checkpoint --status complete requires --quality-gate-json with codeReview.recommendation APPROVE and codeReview.architectStatus CLEAR",
+		);
+	}
+	const gate = await readStructuredValue(cwd, value);
+	const gateObject = qualityGateObject(gate);
+	const codeReview = qualityGateObject(gateObject?.codeReview);
+	if (codeReview?.recommendation !== "APPROVE" || codeReview.architectStatus !== "CLEAR") {
+		throw new Error(
+			"checkpoint --status complete requires architect review approval: codeReview.recommendation must be APPROVE and codeReview.architectStatus must be CLEAR",
+		);
+	}
+	return gate;
+}
 
 export async function checkpointUltragoalGoal(input: {
 	cwd: string;
@@ -318,6 +338,12 @@ export async function checkpointUltragoalGoal(input: {
 	if (!goal) throw new Error(`No ultragoal goal found for ${input.goalId}.`);
 	const evidence = input.evidence.trim();
 	if (!evidence) throw new Error("checkpoint evidence is required");
+	const qualityGateJson =
+		input.status === "complete"
+			? await readRequiredCompletionQualityGate(input.cwd, input.qualityGateJson)
+			: input.qualityGateJson
+				? await readStructuredValue(input.cwd, input.qualityGateJson)
+				: undefined;
 	const now = new Date().toISOString();
 	goal.status = input.status;
 	goal.evidence = evidence;
@@ -331,7 +357,7 @@ export async function checkpointUltragoalGoal(input: {
 		status: input.status,
 		evidence,
 		gjcGoalJson: input.gjcGoalJson ? await readStructuredValue(input.cwd, input.gjcGoalJson) : undefined,
-		qualityGateJson: input.qualityGateJson ? await readStructuredValue(input.cwd, input.qualityGateJson) : undefined,
+		qualityGateJson,
 	});
 	return plan;
 }
