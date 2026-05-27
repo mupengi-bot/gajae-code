@@ -15,6 +15,12 @@ export interface GjcTeamWorker {
 	pane_id?: string;
 	status: "starting" | "idle" | "busy" | "stopped";
 	last_heartbeat: string;
+	worktree_repo_root?: string;
+	worktree_path?: string;
+	worktree_branch?: string | null;
+	worktree_detached?: boolean;
+	worktree_created?: boolean;
+	worktree_base_ref?: string;
 }
 
 export interface GjcTeamTask {
@@ -27,6 +33,11 @@ export interface GjcTeamTask {
 	updated_at: string;
 }
 
+export type GjcTeamWorktreeMode =
+	| { enabled: false }
+	| { enabled: true; detached: true; name: null }
+	| { enabled: true; detached: false; name: string };
+
 export interface GjcTeamConfig {
 	team_name: string;
 	display_name: string;
@@ -36,7 +47,9 @@ export interface GjcTeamConfig {
 	worker_count: number;
 	state_root: string;
 	worker_command: string;
+	tmux_command: string;
 	tmux_session: string;
+	workspace_mode: "direct" | "worktree";
 	leader: GjcTeamLeader;
 	workers: GjcTeamWorker[];
 	created_at: string;
@@ -60,6 +73,7 @@ export interface GjcTeamStartOptions {
 	agentType: string;
 	task: string;
 	teamName?: string;
+	worktreeMode?: GjcTeamWorktreeMode;
 	cwd?: string;
 	env?: NodeJS.ProcessEnv;
 	dryRun?: boolean;
@@ -153,7 +167,7 @@ async function appendTelemetry(dir: string, event: Omit<GjcTeamEvent, "ts">): Pr
 async function readConfig(dir: string): Promise<GjcTeamConfig> {
 	const config = await readJsonFile<GjcTeamConfig>(path.join(dir, "config.json"));
 	if (!config) throw new Error(`team_config_not_found:${dir}`);
-	return config;
+	return { ...config, tmux_command: config.tmux_command ?? resolveGjcTmuxCommand() };
 }
 
 async function readPhase(dir: string): Promise<GjcTeamPhase> {
@@ -215,8 +229,160 @@ function buildWorkers(count: number, agentType: string): GjcTeamWorker[] {
 	}));
 }
 
+function sanitizePathToken(value: string): string {
+	const sanitized = value
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "");
+	return sanitized || "default";
+}
+
+function runGit(cwd: string, args: string[]): string {
+	const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+	if (result.exitCode === 0) return result.stdout.toString().trim();
+	const stderr = result.stderr.toString().trim();
+	throw new Error(stderr || `git ${args.join(" ")} failed`);
+}
+
+function tryRunGit(cwd: string, args: string[]): string | null {
+	const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+	return result.exitCode === 0 ? result.stdout.toString().trim() : null;
+}
+
+function isGitRepository(cwd: string): boolean {
+	return tryRunGit(cwd, ["rev-parse", "--show-toplevel"]) != null;
+}
+
+function parseWorktreeMode(args: string[]): { mode: GjcTeamWorktreeMode; remainingArgs: string[] } {
+	let mode: GjcTeamWorktreeMode = { enabled: false };
+	const remainingArgs: string[] = [];
+
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index] ?? "";
+		if (arg === "--worktree" || arg === "-w") {
+			const next = args[index + 1];
+			if (typeof next === "string" && next.length > 0 && !next.startsWith("-") && !next.includes(":")) {
+				mode = { enabled: true, detached: false, name: next };
+				index += 1;
+			} else {
+				mode = { enabled: true, detached: true, name: null };
+			}
+			continue;
+		}
+		if (arg.startsWith("--worktree=")) {
+			const name = arg.slice("--worktree=".length).trim();
+			mode = name ? { enabled: true, detached: false, name } : { enabled: true, detached: true, name: null };
+			continue;
+		}
+		if (arg.startsWith("-w=") || (arg.startsWith("-w") && arg.length > 2)) {
+			const name = arg.startsWith("-w=") ? arg.slice("-w=".length).trim() : arg.slice(2).trim();
+			mode = name ? { enabled: true, detached: false, name } : { enabled: true, detached: true, name: null };
+			continue;
+		}
+		remainingArgs.push(arg);
+	}
+
+	return { mode, remainingArgs };
+}
+
+function resolveDefaultWorktreeMode(mode?: GjcTeamWorktreeMode): GjcTeamWorktreeMode {
+	if (mode?.enabled) return mode;
+	return { enabled: true, detached: true, name: null };
+}
+
+function branchExists(repoRoot: string, branchName: string): boolean {
+	const result = Bun.spawnSync(["git", "show-ref", "--verify", "--quiet", `refs/heads/${branchName}`], {
+		cwd: repoRoot,
+		stdout: "ignore",
+		stderr: "ignore",
+	});
+	return result.exitCode === 0;
+}
+
+function worktreeIsDirty(worktreePath: string): boolean {
+	return runGit(worktreePath, ["status", "--porcelain"]).trim().length > 0;
+}
+
+function worktreeHead(worktreePath: string): string {
+	return runGit(worktreePath, ["rev-parse", "HEAD"]);
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+	try {
+		await fs.access(filePath);
+		return true;
+	} catch (error) {
+		if (isEnoent(error)) return false;
+		throw error;
+	}
+}
+
+function findWorktreePath(repoRoot: string, worktreePath: string): string | null {
+	const raw = runGit(repoRoot, ["worktree", "list", "--porcelain"]);
+	const resolved = path.resolve(worktreePath);
+	for (const line of raw.split(/\r?\n/)) {
+		if (!line.startsWith("worktree ")) continue;
+		const candidate = path.resolve(line.slice("worktree ".length));
+		if (candidate === resolved) return candidate;
+	}
+	return null;
+}
+
+async function ensureWorkerWorktree(
+	cwd: string,
+	dir: string,
+	teamName: string,
+	worker: GjcTeamWorker,
+	mode: GjcTeamWorktreeMode,
+): Promise<GjcTeamWorker> {
+	if (!mode.enabled) return worker;
+	if (!isGitRepository(cwd)) throw new Error(`team_worktree_requires_git_repo:${cwd}`);
+
+	const repoRoot = runGit(cwd, ["rev-parse", "--show-toplevel"]);
+	const baseRef = runGit(repoRoot, ["rev-parse", "HEAD"]);
+	const worktreePath = path.join(dir, "worktrees", worker.id);
+	const existing = findWorktreePath(repoRoot, worktreePath);
+	let created = false;
+	let branchName: string | null = null;
+
+	if (!mode.detached) {
+		branchName = `${mode.name}/${sanitizePathToken(teamName)}/${sanitizePathToken(worker.id)}`;
+	}
+
+	if (existing) {
+		if (worktreeIsDirty(worktreePath)) throw new Error(`worktree_dirty:${worktreePath}`);
+		if (mode.detached && worktreeHead(worktreePath) !== baseRef) throw new Error(`worktree_stale:${worktreePath}`);
+	} else {
+		if (await pathExists(worktreePath)) throw new Error(`worktree_path_conflict:${worktreePath}`);
+		await fs.mkdir(path.dirname(worktreePath), { recursive: true });
+		const branchAlreadyExists = branchName ? branchExists(repoRoot, branchName) : false;
+		const args = mode.detached
+			? ["worktree", "add", "--detach", worktreePath, baseRef]
+			: branchAlreadyExists
+				? ["worktree", "add", worktreePath, branchName ?? ""]
+				: ["worktree", "add", "-b", branchName ?? "", worktreePath, baseRef];
+		runGit(repoRoot, args);
+		created = true;
+	}
+
+	return {
+		...worker,
+		worktree_repo_root: repoRoot,
+		worktree_path: path.resolve(worktreePath),
+		worktree_branch: branchName,
+		worktree_detached: mode.detached,
+		worktree_created: created,
+		worktree_base_ref: baseRef,
+	};
+}
+
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+export function resolveGjcTmuxCommand(env: NodeJS.ProcessEnv = process.env): string {
+	return env.GJC_TEAM_TMUX_COMMAND?.trim() || "tmux";
 }
 
 export function resolveGjcWorkerCommand(cwd = process.cwd(), env: NodeJS.ProcessEnv = process.env): string {
@@ -231,10 +397,14 @@ export function resolveGjcWorkerCommand(cwd = process.cwd(), env: NodeJS.Process
 }
 
 function buildWorkerCommand(config: GjcTeamConfig, worker: GjcTeamWorker): string {
+	const workspace = worker.worktree_path
+		? `Worker worktree: ${worker.worktree_path}.`
+		: `Worker cwd: ${config.leader.cwd}.`;
 	const prompt = [
 		`You are ${worker.id} in gjc team ${config.team_name}.`,
 		`Team state root: ${config.state_root}.`,
 		`Team command: ${config.worker_command}.`,
+		workspace,
 		`Task: ${config.task}`,
 		`Use ${config.worker_command} team api claim-task/transition-task with this worker id, record evidence, and do not expose private support workflows as public definitions.`,
 	].join("\n");
@@ -242,6 +412,7 @@ function buildWorkerCommand(config: GjcTeamConfig, worker: GjcTeamWorker): strin
 		`GJC_TEAM_NAME=${shellQuote(config.team_name)}`,
 		`GJC_TEAM_WORKER_ID=${shellQuote(worker.id)}`,
 		`GJC_TEAM_STATE_ROOT=${shellQuote(config.state_root)}`,
+		...(worker.worktree_path ? [`GJC_TEAM_WORKTREE_PATH=${shellQuote(worker.worktree_path)}`] : []),
 	];
 	return `${env.join(" ")} ${config.worker_command} ${shellQuote(prompt)}`;
 }
@@ -266,13 +437,13 @@ async function startTmuxSession(config: GjcTeamConfig, dir: string, dryRun: bool
 	try {
 		const create = Bun.spawnSync(
 			[
-				"tmux",
+				config.tmux_command,
 				"new-session",
 				"-d",
 				"-s",
 				config.tmux_session,
 				"-c",
-				config.leader.cwd,
+				leaderWorker.worktree_path ?? config.leader.cwd,
 				buildWorkerCommand(config, leaderWorker),
 			],
 			{
@@ -280,24 +451,33 @@ async function startTmuxSession(config: GjcTeamConfig, dir: string, dryRun: bool
 				stderr: "pipe",
 			},
 		);
-		if (create.exitCode !== 0) return config.workers;
-	} catch {
-		return config.workers;
+		if (create.exitCode !== 0) {
+			const stderr = create.stderr.toString().trim();
+			throw new Error(stderr || `tmux_start_failed:${config.tmux_session}`);
+		}
+	} catch (error) {
+		if (error instanceof Error) throw error;
+		throw new Error(`tmux_start_failed:${config.tmux_session}`);
 	}
 
 	const workers: GjcTeamWorker[] = [];
-	const leaderPane = Bun.spawnSync(["tmux", "display-message", "-p", "-t", config.tmux_session, "#{pane_id}"], {
-		stdout: "pipe",
-		stderr: "ignore",
-	});
+	const leaderPane = Bun.spawnSync(
+		[config.tmux_command, "display-message", "-p", "-t", config.tmux_session, "#{pane_id}"],
+		{
+			stdout: "pipe",
+			stderr: "ignore",
+		},
+	);
+	const leaderPaneId = leaderPane.stdout.toString().trim();
+	if (!leaderPaneId) throw new Error(`tmux_leader_pane_missing:${config.tmux_session}`);
 	workers.push({
 		...leaderWorker,
-		pane_id: leaderPane.stdout.toString().trim() || undefined,
+		pane_id: leaderPaneId,
 	});
 	for (const worker of otherWorkers) {
 		const split = Bun.spawnSync(
 			[
-				"tmux",
+				config.tmux_command,
 				"split-window",
 				"-P",
 				"-F",
@@ -305,20 +485,59 @@ async function startTmuxSession(config: GjcTeamConfig, dir: string, dryRun: bool
 				"-t",
 				config.tmux_session,
 				"-c",
-				config.leader.cwd,
+				worker.worktree_path ?? config.leader.cwd,
 				buildWorkerCommand(config, worker),
 			],
-			{ stdout: "pipe", stderr: "ignore" },
+			{ stdout: "pipe", stderr: "pipe" },
 		);
-		workers.push({ ...worker, pane_id: split.stdout.toString().trim() || undefined });
+		if (split.exitCode !== 0) {
+			const stderr = split.stderr.toString().trim();
+			throw new Error(stderr || `tmux_split_failed:${config.tmux_session}:${worker.id}`);
+		}
+		const paneId = split.stdout.toString().trim();
+		if (!paneId) throw new Error(`tmux_split_missing_pane:${config.tmux_session}:${worker.id}`);
+		workers.push({ ...worker, pane_id: paneId });
 	}
-	Bun.spawnSync(["tmux", "select-layout", "-t", config.tmux_session, "tiled"], { stdout: "ignore", stderr: "ignore" });
+	Bun.spawnSync([config.tmux_command, "select-layout", "-t", config.tmux_session, "tiled"], {
+		stdout: "ignore",
+		stderr: "ignore",
+	});
 	await appendTelemetry(dir, {
 		type: "tmux_started",
 		message: "Started gjc team tmux session",
 		data: { tmux_session: config.tmux_session, panes: workers.map(worker => worker.pane_id).filter(Boolean) },
 	});
 	return workers;
+}
+
+function killTmuxSession(config: GjcTeamConfig): void {
+	Bun.spawnSync([config.tmux_command, "kill-session", "-t", config.tmux_session], {
+		stdout: "ignore",
+		stderr: "ignore",
+	});
+}
+
+async function rollbackCreatedWorktrees(workers: GjcTeamWorker[]): Promise<void> {
+	for (const worker of workers.filter(worker => worker.worktree_created).reverse()) {
+		if (!worker.worktree_repo_root || !worker.worktree_path) continue;
+		Bun.spawnSync(["git", "worktree", "remove", "--force", worker.worktree_path], {
+			cwd: worker.worktree_repo_root,
+			stdout: "ignore",
+			stderr: "ignore",
+		});
+	}
+}
+
+async function removeCleanCreatedWorktrees(workers: GjcTeamWorker[]): Promise<void> {
+	for (const worker of workers.filter(worker => worker.worktree_created).reverse()) {
+		if (!worker.worktree_repo_root || !worker.worktree_path) continue;
+		if (worktreeIsDirty(worker.worktree_path)) continue;
+		Bun.spawnSync(["git", "worktree", "remove", worker.worktree_path], {
+			cwd: worker.worktree_repo_root,
+			stdout: "ignore",
+			stderr: "ignore",
+		});
+	}
 }
 
 export async function startGjcTeam(options: GjcTeamStartOptions): Promise<GjcTeamSnapshot> {
@@ -329,6 +548,17 @@ export async function startGjcTeam(options: GjcTeamStartOptions): Promise<GjcTea
 	const displayName = sanitizeName(options.teamName ?? options.task).slice(0, 30) || teamName;
 	const dir = teamDir(stateRoot, teamName);
 	const createdAt = now();
+	const worktreeMode = resolveDefaultWorktreeMode(options.worktreeMode);
+	const initialWorkers = buildWorkers(options.workerCount, options.agentType);
+	const workers: GjcTeamWorker[] = [];
+	try {
+		for (const worker of initialWorkers) {
+			workers.push(options.dryRun ? worker : await ensureWorkerWorktree(cwd, dir, teamName, worker, worktreeMode));
+		}
+	} catch (error) {
+		await rollbackCreatedWorktrees(workers);
+		throw error;
+	}
 	const config: GjcTeamConfig = {
 		team_name: teamName,
 		display_name: displayName,
@@ -338,13 +568,15 @@ export async function startGjcTeam(options: GjcTeamStartOptions): Promise<GjcTea
 		worker_count: options.workerCount,
 		state_root: stateRoot,
 		worker_command: resolveGjcWorkerCommand(cwd, env),
+		tmux_command: resolveGjcTmuxCommand(env),
 		tmux_session: `gjc-${teamName}`,
+		workspace_mode: worktreeMode.enabled ? "worktree" : "direct",
 		leader: {
 			session_id: env.GJC_SESSION_ID ?? env.CODEX_SESSION_ID ?? "",
 			pane_id: env.TMUX_PANE ?? "",
 			cwd,
 		},
-		workers: buildWorkers(options.workerCount, options.agentType),
+		workers,
 		created_at: createdAt,
 		updated_at: createdAt,
 	};
@@ -359,8 +591,10 @@ export async function startGjcTeam(options: GjcTeamStartOptions): Promise<GjcTea
 		requested_name: config.requested_name,
 		tmux_session: config.tmux_session,
 		worker_command: config.worker_command,
+		tmux_command: config.tmux_command,
 		leader: config.leader,
 		workers: config.workers,
+		workspace_mode: config.workspace_mode,
 		created_at: createdAt,
 		updated_at: createdAt,
 	});
@@ -372,14 +606,26 @@ export async function startGjcTeam(options: GjcTeamStartOptions): Promise<GjcTea
 	await appendEvent(dir, {
 		type: "team_started",
 		message: "Started native gjc team runtime",
-		data: { worker_count: options.workerCount, agent_type: options.agentType },
+		data: { worker_count: options.workerCount, agent_type: options.agentType, workspace_mode: config.workspace_mode },
 	});
 	await appendTelemetry(dir, {
 		type: "team_runtime",
 		message: "Native gjc team runtime initialized",
-		data: { state_root: stateRoot, worker_command: config.worker_command },
+		data: { state_root: stateRoot, worker_command: config.worker_command, workspace_mode: config.workspace_mode },
 	});
-	const tmuxWorkers = await startTmuxSession(config, dir, options.dryRun ?? false);
+	let tmuxWorkers: GjcTeamWorker[];
+	try {
+		tmuxWorkers = await startTmuxSession(config, dir, options.dryRun ?? false);
+	} catch (error) {
+		await writePhase(dir, "failed");
+		await appendEvent(dir, {
+			type: "team_start_failed",
+			message: error instanceof Error ? error.message : String(error),
+		});
+		killTmuxSession(config);
+		await rollbackCreatedWorktrees(config.workers);
+		throw error;
+	}
 	const runningConfig = {
 		...config,
 		workers: tmuxWorkers.map(worker => ({ ...worker, status: "idle" as const, last_heartbeat: now() })),
@@ -446,7 +692,8 @@ export async function shutdownGjcTeam(
 ): Promise<GjcTeamSnapshot> {
 	const dir = await findTeamDir(teamName, cwd, env);
 	const config = await readConfig(dir);
-	Bun.spawnSync(["tmux", "kill-session", "-t", config.tmux_session], { stdout: "ignore", stderr: "ignore" });
+	killTmuxSession(config);
+	await removeCleanCreatedWorktrees(config.workers);
 	const stopped = {
 		...config,
 		workers: config.workers.map(worker => ({ ...worker, status: "stopped" as const, last_heartbeat: now() })),
@@ -501,7 +748,8 @@ export async function transitionGjcTeamTask(
 }
 
 export function parseTeamLaunchArgs(argv: string[]): GjcTeamStartOptions {
-	const positionals = argv.filter(arg => !arg.startsWith("--"));
+	const parsedWorktree = parseWorktreeMode(argv);
+	const positionals = parsedWorktree.remainingArgs.filter(arg => !arg.startsWith("--"));
 	const dryRun = argv.includes("--dry-run");
 	const spec = positionals[0] ?? "3:executor";
 	const specMatch = spec.match(/^(?:(\d+):)?([a-zA-Z][a-zA-Z0-9_-]*)$/);
@@ -514,5 +762,5 @@ export function parseTeamLaunchArgs(argv: string[]): GjcTeamStartOptions {
 	if (!task) throw new Error("missing_team_task");
 	if (!Number.isInteger(workerCount) || workerCount < 1 || workerCount > 12)
 		throw new Error(`invalid_worker_count:${workerCount}`);
-	return { workerCount, agentType, task, dryRun };
+	return { workerCount, agentType, task, dryRun, worktreeMode: resolveDefaultWorktreeMode(parsedWorktree.mode) };
 }
