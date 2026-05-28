@@ -19,7 +19,7 @@ function normalizeRenderedText(text: string): string {
 
 interface SelectionCapture {
 	model: Model;
-	role: "default" | null;
+	role: string | null;
 	thinkingLevel: unknown;
 	selector: string | undefined;
 }
@@ -29,7 +29,7 @@ function createSelector(
 	settings: Settings,
 	onSelect: (
 		model: Model,
-		role: "default" | null,
+		role: string | null,
 		thinkingLevel: unknown,
 		selector: string | undefined,
 	) => void = () => {},
@@ -86,7 +86,7 @@ describe("ModelSelector canonical model selection", () => {
 		}
 	});
 
-	test("uses canonical default-only model assignment even when legacy roles are configured", async () => {
+	test("uses canonical GJC assignment actions while hiding legacy roles", async () => {
 		installTestTheme();
 		const model = getBundledModel("anthropic", "claude-sonnet-4-5");
 		if (!model) throw new Error("Expected bundled model anthropic/claude-sonnet-4-5");
@@ -97,6 +97,9 @@ describe("ModelSelector canonical model selection", () => {
 				default: `${model.provider}/${model.id}:low`,
 				"custom-fast": `${model.provider}/${model.id}:high`,
 				smol: `${model.provider}/${model.id}`,
+			},
+			"task.agentModelOverrides": {
+				executor: `${model.provider}/${model.id}:high`,
 			},
 			modelTags: {
 				smol: { name: "Quick", color: "error" },
@@ -112,8 +115,22 @@ describe("ModelSelector canonical model selection", () => {
 
 		const rendered = normalizeRenderedText(selector.render(220).join("\n"));
 		expect(rendered).toContain("DEFAULT (low)");
+		expect(rendered).toContain("EXECUTOR (high)");
 		expect(rendered).not.toContain("custom-fast");
 		expect(rendered).not.toContain("SMOL");
+
+		selector.handleInput("\n");
+		installTestTheme();
+		const actionRendered = normalizeRenderedText(selector.render(220).join("\n"));
+		expect(actionRendered).toContain("Action for:");
+		expect(actionRendered).toContain("Set as DEFAULT (Default)");
+		expect(actionRendered).toContain("Set as EXECUTOR (Executor)");
+		expect(actionRendered).toContain("Set as ARCHITECT (Architect)");
+		expect(actionRendered).toContain("Set as PLANNER (Planner)");
+		expect(actionRendered).toContain("Set as CRITIC (Critic)");
+		expect(actionRendered).not.toContain("Set as custom-fast");
+		expect(actionRendered).not.toContain("Set as SMOL");
+		expect(actionRendered).not.toContain("Set as TASK");
 
 		selector.handleInput("\n");
 		installTestTheme();
@@ -122,12 +139,34 @@ describe("ModelSelector canonical model selection", () => {
 		expect(selectedAfterEnter.model).toBe(model);
 		expect(selectedAfterEnter.role).toBe("default");
 		expect(selectedAfterEnter.selector).toBe(`${model.provider}/${model.id}`);
+	});
 
-		const afterEnterRendered = normalizeRenderedText(selector.render(220).join("\n"));
-		expect(afterEnterRendered).not.toContain("Action for:");
-		expect(afterEnterRendered).not.toContain("Set as DEFAULT");
-		expect(afterEnterRendered).not.toContain("Set as custom-fast");
-		expect(afterEnterRendered).not.toContain("Set as SMOL");
+	test("selects role-agent assignment without using stale task role", async () => {
+		installTestTheme();
+		const model = getBundledModel("anthropic", "claude-sonnet-4-5");
+		if (!model) throw new Error("Expected bundled model anthropic/claude-sonnet-4-5");
+
+		const settings = Settings.isolated({
+			modelRoles: {
+				default: `${model.provider}/${model.id}:medium`,
+			},
+		});
+
+		let selected: SelectionCapture | undefined;
+		const selector = createSelector(model, settings, (selectedModel, role, thinkingLevel, selectorValue) => {
+			selected = { model: selectedModel, role, thinkingLevel, selector: selectorValue };
+		});
+		await Bun.sleep(0);
+		installTestTheme();
+
+		selector.handleInput("\n");
+		selector.handleInput("\x1b[B");
+		selector.handleInput("\n");
+
+		const selectedAfterEnter = selected;
+		if (!selectedAfterEnter) throw new Error("Expected role-agent selection");
+		expect(selectedAfterEnter.role).toBe("executor");
+		expect(selectedAfterEnter.selector).toBe(`${model.provider}/${model.id}`);
 	});
 
 	test("refreshes Ollama Cloud using provider id instead of tab label", async () => {

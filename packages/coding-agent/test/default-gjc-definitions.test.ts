@@ -3,6 +3,10 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	GJC_MODEL_ASSIGNMENT_TARGET_IDS,
+	GJC_MODEL_ASSIGNMENT_TARGETS,
+} from "@gajae-code/coding-agent/config/model-registry";
+import {
 	DEFAULT_GJC_DEFINITION_NAMES,
 	getDefaultGjcDefinitions,
 	installDefaultGjcDefinitions,
@@ -69,6 +73,17 @@ describe("default GJC definitions", () => {
 			expect(bundledRoleAgents).toEqual([...roleAgentNames].sort());
 			expect(agents.projectAgentsDir).toBeNull();
 		});
+	});
+
+	it("exposes only default plus four GJC role agents as model assignment targets", () => {
+		expect(GJC_MODEL_ASSIGNMENT_TARGET_IDS).toEqual(["default", "executor", "architect", "planner", "critic"]);
+		expect(GJC_MODEL_ASSIGNMENT_TARGET_IDS.map(id => GJC_MODEL_ASSIGNMENT_TARGETS[id].tag)).toEqual([
+			"DEFAULT",
+			"EXECUTOR",
+			"ARCHITECT",
+			"PLANNER",
+			"CRITIC",
+		]);
 	});
 
 	it("enforces role-agent tool boundaries through parsed frontmatter", () => {

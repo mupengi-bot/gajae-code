@@ -22,6 +22,9 @@ interface FakeAcpBuiltinSession {
 	formatSessionAsText: () => string;
 	getLastAssistantText: () => string | undefined;
 	messages: unknown[];
+	modelRegistry: {
+		getApiKey(model: { provider: string; id: string }, sessionId?: string): Promise<string | undefined>;
+	};
 	model: { provider: string; id: string } | undefined;
 	newSession(opts?: { drop?: boolean; parentSession?: string }): Promise<boolean>;
 	fork(): Promise<boolean>;
@@ -84,6 +87,11 @@ function createRuntime() {
 		formatSessionAsText: () => "",
 		getLastAssistantText: () => undefined,
 		messages: [],
+		modelRegistry: {
+			async getApiKey(_model: { provider: string; id: string }, _sessionId?: string) {
+				return "test-api-key";
+			},
+		},
 		model: undefined,
 		getToolByName: (_name: string) => undefined,
 		async compact(_args?: string) {},
@@ -263,6 +271,38 @@ describe("ACP builtin slash commands", () => {
 		expect(output[0]).toContain("No model");
 	});
 
+	it("model: reports only default plus GJC role-agent assignment targets", async () => {
+		const { output, runtime } = createRuntime();
+		runtime.settings = Settings.isolated({
+			cycleOrder: ["smol", "task", "default"],
+			modelRoles: {
+				default: "anthropic/default-model:medium",
+				smol: "anthropic/legacy-smol",
+				task: "anthropic/legacy-task",
+			},
+			"task.agentModelOverrides": {
+				executor: "anthropic/executor-model:low",
+			},
+			modelTags: {
+				smol: { name: "Quick", color: "error" },
+			},
+		});
+
+		const result = await executeAcpBuiltinSlashCommand("/model", runtime);
+
+		expect(result).toEqual({ consumed: true });
+		expect(output[0]).toContain("DEFAULT (Default): anthropic/default-model:medium");
+		expect(output[0]).toContain("EXECUTOR (Executor): anthropic/executor-model:low");
+		expect(output[0]).toContain("ARCHITECT (Architect): (unset)");
+		expect(output[0]).toContain("PLANNER (Planner): (unset)");
+		expect(output[0]).toContain("CRITIC (Critic): (unset)");
+		expect(output[0]).not.toContain("SMOL");
+		expect(output[0]).not.toContain("TASK");
+		expect(output[0]).not.toContain("anthropic/legacy-smol");
+		expect(output[0]).not.toContain("anthropic/legacy-task");
+		expect(output[0]).not.toContain("Quick");
+	});
+
 	it("model: returns ACP usage message when args provided", async () => {
 		const { output, runtime } = createRuntime();
 
@@ -289,9 +329,37 @@ describe("ACP builtin slash commands", () => {
 		const result = await executeAcpBuiltinSlashCommand("/model claude-3-5-sonnet", runtime);
 
 		expect(result).toEqual({ consumed: true });
-		expect(setModelSpy).toHaveBeenCalledWith(available[0]);
-		expect(output[0]).toContain("Model set to anthropic/claude-3-5-sonnet");
+		expect(setModelSpy).toHaveBeenCalledWith(available[0], "default", {
+			selector: "anthropic/claude-3-5-sonnet",
+			thinkingLevel: undefined,
+		});
+		expect(output[0]).toContain("Default model set to anthropic/claude-3-5-sonnet");
 		expect(titleNotified).toBe(1);
+		expect(configNotified).toBe(1);
+	});
+
+	it("model: assigns a known model to a GJC role-agent target without switching active model", async () => {
+		const { output, runtime, session } = createRuntime();
+		session.getAvailableModels = () => [{ provider: "anthropic", id: "claude-3-5-sonnet", contextWindow: 200_000 }];
+		const setModelSpy = spyOn(session, "setModel").mockResolvedValue(undefined);
+		let titleNotified = 0;
+		let configNotified = 0;
+		runtime.notifyTitleChanged = () => {
+			titleNotified++;
+		};
+		runtime.notifyConfigChanged = () => {
+			configNotified++;
+		};
+
+		const result = await executeAcpBuiltinSlashCommand("/model executor anthropic/claude-3-5-sonnet:low", runtime);
+
+		expect(result).toEqual({ consumed: true });
+		expect(setModelSpy).not.toHaveBeenCalled();
+		expect(runtime.settings.get("task.agentModelOverrides")).toEqual({
+			executor: "anthropic/claude-3-5-sonnet:low",
+		});
+		expect(output[0]).toContain("executor agent model set to anthropic/claude-3-5-sonnet:low");
+		expect(titleNotified).toBe(0);
 		expect(configNotified).toBe(1);
 	});
 
@@ -585,7 +653,7 @@ describe("wave 5 — adapters and polish", () => {
 		};
 		const result = await executeAcpBuiltinSlashCommand("/model claude-sonnet-test", runtime);
 		expect(result).toEqual({ consumed: true });
-		expect(output[0]).toContain("Model set to anthropic/claude-sonnet-test.");
+		expect(output[0]).toContain("Default model set to anthropic/claude-sonnet-test.");
 		expect(titleChanged).toBe(true);
 	});
 

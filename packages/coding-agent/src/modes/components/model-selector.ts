@@ -12,9 +12,9 @@ import {
 	Text,
 	type TUI,
 } from "@gajae-code/tui";
-import type { ModelRegistry } from "../../config/model-registry";
-import { getRoleInfo } from "../../config/model-registry";
-import { resolveModelRoleValue } from "../../config/model-resolver";
+import type { GjcModelAssignmentTargetId, ModelRegistry } from "../../config/model-registry";
+import { GJC_MODEL_ASSIGNMENT_TARGET_IDS, GJC_MODEL_ASSIGNMENT_TARGETS } from "../../config/model-registry";
+import { formatModelSelectorValue, resolveModelRoleValue } from "../../config/model-resolver";
 import type { Settings } from "../../config/settings";
 import { type ThemeColor, theme } from "../../modes/theme/theme";
 import { formatModelOnboardingInlineHint } from "../../setup/model-onboarding-guidance";
@@ -78,7 +78,7 @@ interface RoleAssignment {
 
 type RoleSelectCallback = (
 	model: Model,
-	role: "default" | null,
+	role: GjcModelAssignmentTargetId | null,
 	thinkingLevel?: ThinkingLevel,
 	selector?: string,
 ) => void;
@@ -108,7 +108,7 @@ function createProviderTab(providerId: string): ProviderTabState {
  * Component that renders a canonical model selector with provider tabs.
  * - Tab/Arrow Left/Right: Switch between provider tabs
  * - Arrow Up/Down: Navigate model list
- * - Enter: Select the highlighted model as the canonical/default model
+ * - Enter: Open assignment actions for default plus GJC role-agent models
  * - Escape: Close selector
  */
 export class ModelSelectorComponent extends Container {
@@ -130,6 +130,8 @@ export class ModelSelectorComponent extends Container {
 	#tui: TUI;
 	#scopedModels: ReadonlyArray<ScopedModelItem>;
 	#temporaryOnly: boolean;
+	#pendingActionItem?: ModelItem | CanonicalModelItem;
+	#selectedActionIndex: number = 0;
 
 	// Tab state
 	#providers: ProviderTabState[] = STATIC_PROVIDER_TABS;
@@ -141,7 +143,12 @@ export class ModelSelectorComponent extends Container {
 		settings: Settings,
 		modelRegistry: ModelRegistry,
 		scopedModels: ReadonlyArray<ScopedModelItem>,
-		onSelect: (model: Model, role: "default" | null, thinkingLevel?: ThinkingLevel, selector?: string) => void,
+		onSelect: (
+			model: Model,
+			role: GjcModelAssignmentTargetId | null,
+			thinkingLevel?: ThinkingLevel,
+			selector?: string,
+		) => void,
 		onCancel: () => void,
 		options?: { temporaryOnly?: boolean; initialSearchInput?: string },
 	) {
@@ -183,7 +190,7 @@ export class ModelSelectorComponent extends Container {
 		this.#searchInput.onSubmit = () => {
 			const selectedItem = this.#getSelectedItem();
 			if (selectedItem) {
-				this.#handleSelect(selectedItem, this.#temporaryOnly ? null : "default");
+				this.#beginActionMenuOrSelect(selectedItem);
 			}
 		};
 		this.addChild(this.#searchInput);
@@ -219,8 +226,11 @@ export class ModelSelectorComponent extends Container {
 	#loadRoleModels(): void {
 		const allModels = this.#modelRegistry.getAll();
 		const matchPreferences = { usageOrder: this.#settings.getStorage()?.getModelUsageOrder() };
-		for (const role of ["default"]) {
-			const roleValue = this.#settings.getModelRole(role);
+		const agentModelOverrides = this.#settings.get("task.agentModelOverrides");
+		for (const role of GJC_MODEL_ASSIGNMENT_TARGET_IDS) {
+			const target = GJC_MODEL_ASSIGNMENT_TARGETS[role];
+			const roleValue =
+				target.settingsPath === "modelRoles" ? this.#settings.getModelRole(role) : agentModelOverrides[role];
 			if (!roleValue) continue;
 
 			const resolved = resolveModelRoleValue(roleValue, allModels, {
@@ -627,12 +637,14 @@ export class ModelSelectorComponent extends Container {
 
 			// Build role badges (inverted: color as background, black text)
 			const roleBadgeTokens: string[] = [];
-			const defaultRoleInfo = getRoleInfo("default", this.#settings);
-			const defaultAssigned = this.#roles.default;
-			if (defaultRoleInfo.tag && defaultAssigned && modelsAreEqual(defaultAssigned.model, item.model)) {
-				const badge = makeInvertedBadge(defaultRoleInfo.tag, defaultRoleInfo.color ?? "success");
-				const thinkingLabel = getThinkingLevelMetadata(defaultAssigned.thinkingLevel).label;
-				roleBadgeTokens.push(`${badge} ${theme.fg("dim", `(${thinkingLabel})`)}`);
+			for (const role of GJC_MODEL_ASSIGNMENT_TARGET_IDS) {
+				const roleInfo = GJC_MODEL_ASSIGNMENT_TARGETS[role];
+				const assigned = this.#roles[role];
+				if (roleInfo.tag && assigned && modelsAreEqual(assigned.model, item.model)) {
+					const badge = makeInvertedBadge(roleInfo.tag, roleInfo.color ?? "muted");
+					const thinkingLabel = getThinkingLevelMetadata(assigned.thinkingLevel).label;
+					roleBadgeTokens.push(`${badge} ${theme.fg("dim", `(${thinkingLabel})`)}`);
+				}
 			}
 			const badgeText = roleBadgeTokens.length > 0 ? ` ${roleBadgeTokens.join(" ")}` : "";
 
@@ -699,8 +711,26 @@ export class ModelSelectorComponent extends Container {
 			this.#listContainer.addChild(
 				new Text(theme.fg("muted", `  Model Name: ${selected.model.name}${suffix}`), 0, 0),
 			);
+			if (this.#pendingActionItem) {
+				this.#renderActionMenu(this.#pendingActionItem);
+			}
 		}
 	}
+	#renderActionMenu(item: ModelItem | CanonicalModelItem): void {
+		this.#listContainer.addChild(new Spacer(1));
+		this.#listContainer.addChild(new Text(theme.fg("muted", `  Action for: ${item.model.id}`), 0, 0));
+		this.#listContainer.addChild(new Spacer(1));
+		for (let i = 0; i < GJC_MODEL_ASSIGNMENT_TARGET_IDS.length; i++) {
+			const role = GJC_MODEL_ASSIGNMENT_TARGET_IDS[i];
+			const target = GJC_MODEL_ASSIGNMENT_TARGETS[role];
+			const prefix = i === this.#selectedActionIndex ? theme.fg("accent", `${theme.nav.cursor} `) : "  ";
+			const label = `Set as ${target.tag ?? role.toUpperCase()} (${target.name})`;
+			this.#listContainer.addChild(
+				new Text(`${prefix}${i === this.#selectedActionIndex ? theme.fg("accent", label) : label}`, 0, 0),
+			);
+		}
+	}
+
 	#getCurrentRoleThinkingLevel(role: string): ThinkingLevel {
 		return this.#roles[role]?.thinkingLevel ?? ThinkingLevel.Inherit;
 	}
@@ -712,6 +742,11 @@ export class ModelSelectorComponent extends Container {
 	}
 
 	handleInput(keyData: string): void {
+		if (this.#pendingActionItem) {
+			this.#handleActionMenuInput(keyData);
+			return;
+		}
+
 		// Tab bar navigation
 		if (this.#tabBar?.handleInput(keyData)) {
 			return;
@@ -735,12 +770,12 @@ export class ModelSelectorComponent extends Container {
 			return;
 		}
 
-		// Enter - select highlighted model directly. Canonical setup exposes one default model,
-		// while temporary-only mode keeps the existing non-persistent quick-switch behavior.
+		// Enter opens the persistent assignment menu. Temporary-only mode keeps the
+		// existing non-persistent quick-switch behavior.
 		if (matchesKey(keyData, "enter") || matchesKey(keyData, "return") || keyData === "\n") {
 			const selectedItem = this.#getSelectedItem();
 			if (selectedItem) {
-				this.#handleSelect(selectedItem, this.#temporaryOnly ? null : "default");
+				this.#beginActionMenuOrSelect(selectedItem);
 			}
 			return;
 		}
@@ -755,7 +790,49 @@ export class ModelSelectorComponent extends Container {
 		this.#searchInput.handleInput(keyData);
 		this.#filterModels(this.#searchInput.getValue());
 	}
-	#handleSelect(item: ModelItem | CanonicalModelItem, role: "default" | null, thinkingLevel?: ThinkingLevel): void {
+	#beginActionMenuOrSelect(item: ModelItem | CanonicalModelItem): void {
+		if (this.#temporaryOnly) {
+			this.#handleSelect(item, null);
+			return;
+		}
+		this.#pendingActionItem = item;
+		this.#selectedActionIndex = 0;
+		this.#updateList();
+	}
+
+	#handleActionMenuInput(keyData: string): void {
+		if (matchesKey(keyData, "up")) {
+			this.#selectedActionIndex =
+				this.#selectedActionIndex === 0
+					? GJC_MODEL_ASSIGNMENT_TARGET_IDS.length - 1
+					: this.#selectedActionIndex - 1;
+			this.#updateList();
+			return;
+		}
+		if (matchesKey(keyData, "down")) {
+			this.#selectedActionIndex = (this.#selectedActionIndex + 1) % GJC_MODEL_ASSIGNMENT_TARGET_IDS.length;
+			this.#updateList();
+			return;
+		}
+		if (matchesKey(keyData, "enter") || matchesKey(keyData, "return") || keyData === "\n") {
+			const item = this.#pendingActionItem;
+			if (!item) return;
+			const role = GJC_MODEL_ASSIGNMENT_TARGET_IDS[this.#selectedActionIndex];
+			this.#pendingActionItem = undefined;
+			this.#handleSelect(item, role);
+			return;
+		}
+		if (getKeybindings().matches(keyData, "tui.select.cancel")) {
+			this.#pendingActionItem = undefined;
+			this.#updateList();
+		}
+	}
+
+	#handleSelect(
+		item: ModelItem | CanonicalModelItem,
+		role: GjcModelAssignmentTargetId | null,
+		thinkingLevel?: ThinkingLevel,
+	): void {
 		// For temporary role, don't save to settings - just notify caller
 		if (role === null) {
 			this.#onSelectCallback(item.model, null, undefined, item.selector);
@@ -763,12 +840,14 @@ export class ModelSelectorComponent extends Container {
 		}
 
 		const selectedThinkingLevel = thinkingLevel ?? this.#getCurrentRoleThinkingLevel(role);
+		const selectorValue =
+			role === "default" ? item.selector : formatModelSelectorValue(item.selector, selectedThinkingLevel);
 
 		// Update local state for UI
 		this.#roles[role] = { model: item.model, thinkingLevel: selectedThinkingLevel };
 
 		// Notify caller (for updating agent state if needed)
-		this.#onSelectCallback(item.model, role, selectedThinkingLevel, item.selector);
+		this.#onSelectCallback(item.model, role, selectedThinkingLevel, selectorValue);
 
 		// Update list to show new badges
 		this.#updateList();

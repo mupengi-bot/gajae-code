@@ -441,8 +441,8 @@ export class SelectorController {
 							this.ctx.showStatus(`Temporary model: ${selector ?? model.id}`);
 							done();
 							this.ctx.ui.requestRender();
-						} else {
-							// Default: update agent state and persist
+						} else if (role === "default") {
+							// Default: update agent state and persist as the active default model.
 							await this.ctx.session.setModel(model, role, {
 								selector,
 								thinkingLevel,
@@ -453,6 +453,19 @@ export class SelectorController {
 							this.ctx.statusLine.invalidate();
 							this.ctx.updateEditorBorderColor();
 							this.ctx.showStatus(`Default model: ${selector ?? model.id}`);
+							done();
+							this.ctx.ui.requestRender();
+						} else {
+							// Role-agent assignments configure Task dispatch and must not switch the active chat model.
+							const apiKey = await this.ctx.session.modelRegistry.getApiKey(model, this.ctx.session.sessionId);
+							if (!apiKey) {
+								throw new Error(`No API key for ${model.provider}/${model.id}`);
+							}
+							const overrides = this.ctx.settings.get("task.agentModelOverrides");
+							const value = selector ?? `${model.provider}/${model.id}`;
+							this.ctx.settings.set("task.agentModelOverrides", { ...overrides, [role]: value });
+							this.ctx.settings.getStorage()?.recordModelUsage(`${model.provider}/${model.id}`);
+							this.ctx.showStatus(`${role} agent model: ${value}`);
 							done();
 							this.ctx.ui.requestRender();
 						}
