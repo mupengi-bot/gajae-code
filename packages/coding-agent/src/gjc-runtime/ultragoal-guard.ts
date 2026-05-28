@@ -127,10 +127,7 @@ export function validateCompletionReceipt(input: {
 		beforeStatus: receipt.goalStatusBeforeCheckpoint,
 		excludeEventId: receipt.checkpointLedgerEventId,
 	});
-	const isRefreshedCompleteReceipt =
-		receipt.goalStatusBeforeCheckpoint === "complete" && input.goal.status === "complete";
-
-	if (generation.planGeneration !== receipt.planGeneration && !isRefreshedCompleteReceipt) {
+	if (generation.planGeneration !== receipt.planGeneration) {
 		return {
 			state: "active_stale_receipt",
 			message: `Ultragoal ${input.goal.id} receipt generation is stale.`,
