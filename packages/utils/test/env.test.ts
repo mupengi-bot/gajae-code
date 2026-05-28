@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import { filterProcessEnv, parseEnvFile, parseShellEnvFile } from "../src/env";
 
 const tempDirs: string[] = [];
@@ -18,6 +19,30 @@ function writeTempEnv(content: string, fileName = ".env"): string {
 	const filePath = path.join(dir, fileName);
 	fs.writeFileSync(filePath, content);
 	return filePath;
+}
+
+function runEnvIsolationScript(script: string, env: Record<string, string>, cwd: string): void {
+	const scriptPath = path.join(cwd, "env-isolation.test.ts");
+	fs.writeFileSync(scriptPath, script);
+
+	const result = Bun.spawnSync({
+		cmd: [process.execPath, scriptPath],
+		cwd,
+		env: {
+			HOME: os.homedir(),
+			PATH: Bun.env.PATH ?? "",
+			...env,
+		},
+		stderr: "pipe",
+		stdout: "pipe",
+	});
+
+	if (result.exitCode !== 0) {
+		const output = [new TextDecoder().decode(result.stdout), new TextDecoder().decode(result.stderr)]
+			.filter(Boolean)
+			.join("\n");
+		throw new Error(output || `env isolation script exited with ${result.exitCode}`);
+	}
 }
 
 describe("parseEnvFile", () => {
@@ -67,6 +92,38 @@ describe("parseShellEnvFile", () => {
 			OPENAI_BASE_URL: "https://openai-proxy.example.com/v1",
 			OPENAI_API_KEY: "shell-key",
 		});
+	});
+});
+
+describe("$inheritedEnv", () => {
+	it("keeps the inherited shell snapshot stable while $env reflects later fallback overlay mutation", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-utils-env-inherited-"));
+		tempDirs.push(dir);
+		fs.writeFileSync(path.join(dir, ".env"), "GJC_ENV_TEST_UNUSED=unused\n");
+
+		const envSourceUrl = pathToFileURL(path.resolve(import.meta.dir, "../src/env.ts")).href;
+		runEnvIsolationScript(
+			`
+import { $env, $inheritedEnv } from ${JSON.stringify(envSourceUrl)};
+
+function assertEqual(actual: string | undefined, expected: string | undefined, label: string): void {
+	if (actual !== expected) {
+		throw new Error(\`\${label}: expected \${expected}, got \${actual}\`);
+	}
+}
+
+assertEqual($inheritedEnv("GJC_ENV_TEST_INHERITED_ONLY"), "shell-from-parent", "inherited shell value");
+assertEqual($env.GJC_ENV_TEST_INHERITED_ONLY, "shell-from-parent", "initial merged env value");
+Bun.env.GJC_ENV_TEST_INHERITED_ONLY = "overlay-after-import";
+assertEqual($inheritedEnv("GJC_ENV_TEST_INHERITED_ONLY"), "shell-from-parent", "stable inherited shell snapshot");
+assertEqual($env.GJC_ENV_TEST_INHERITED_ONLY, "overlay-after-import", "live $env overlay value");
+Bun.env.GJC_ENV_TEST_FALLBACK_ONLY = "fallback-after-import";
+assertEqual($inheritedEnv("GJC_ENV_TEST_FALLBACK_ONLY"), undefined, "absent inherited value");
+assertEqual($env.GJC_ENV_TEST_FALLBACK_ONLY, "fallback-after-import", "fallback remains available through $env");
+`,
+			{ GJC_ENV_TEST_INHERITED_ONLY: "shell-from-parent" },
+			dir,
+		);
 	});
 });
 

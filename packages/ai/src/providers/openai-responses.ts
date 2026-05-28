@@ -1,4 +1,4 @@
-import { $env, extractHttpStatusFromError, structuredCloneJSON } from "@gajae-code/utils";
+import { $env, $inheritedEnv, extractHttpStatusFromError, structuredCloneJSON } from "@gajae-code/utils";
 import OpenAI from "openai";
 import type {
 	Tool as OpenAITool,
@@ -109,7 +109,7 @@ function resolveOpenAIProviderBaseUrl(
 	authCredentialType: "api_key" | "oauth" | undefined,
 ): string {
 	if (authCredentialType === "oauth") return OPENAI_DEFAULT_BASE_URL;
-	const envBaseUrl = $env.OPENAI_BASE_URL?.trim();
+	const envBaseUrl = $inheritedEnv("OPENAI_BASE_URL") ?? $env.OPENAI_BASE_URL?.trim();
 	const configuredBaseUrl = baseUrl?.trim();
 	if (envBaseUrl && (!configuredBaseUrl || configuredBaseUrl.toLowerCase().includes("api.openai.com"))) {
 		return envBaseUrl;

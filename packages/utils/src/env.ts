@@ -135,6 +135,16 @@ export function parseEnvFile(filePath: string): Record<string, string> {
 	return result;
 }
 
+const inheritedEnv = filterProcessEnv(Bun.env);
+
+export function $inheritedEnv(name: string): string | undefined {
+	if (!isSafeEnvName(name)) return undefined;
+	const value = inheritedEnv[name];
+	if (value === undefined || !isSafeEnvValue(value)) return undefined;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
+}
+
 // Eagerly parse the user's $HOME/.env and the current project's .env (from cwd)
 const homeShellEnv = {
 	...parseShellEnvFile(path.join(os.homedir(), ".zshenv")),

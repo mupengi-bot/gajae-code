@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { $env, $pickenv, extractHttpStatusFromError } from "@gajae-code/utils";
+import { $env, $inheritedEnv, $pickenv, extractHttpStatusFromError } from "@gajae-code/utils";
 import { getCustomApi } from "./api-registry";
 import type { Effort } from "./model-thinking";
 import {
@@ -77,7 +77,7 @@ type KeyResolver = string | (() => string | undefined);
 
 const serviceProviderMap: Record<string, KeyResolver> = {
 	"alibaba-coding-plan": "ALIBABA_CODING_PLAN_API_KEY",
-	openai: "OPENAI_API_KEY",
+	openai: () => $inheritedEnv("OPENAI_API_KEY") ?? $env.OPENAI_API_KEY,
 	google: "GEMINI_API_KEY",
 	groq: "GROQ_API_KEY",
 	cerebras: "CEREBRAS_API_KEY",

@@ -1,4 +1,4 @@
-import { $env } from "@gajae-code/utils";
+import { $env, $inheritedEnv } from "@gajae-code/utils";
 import type { ModelManagerOptions } from "../model-manager";
 import { Effort } from "../model-thinking";
 import { getBundledModels } from "../models";
@@ -496,7 +496,11 @@ export interface OpenAIModelManagerConfig {
 
 export function openaiModelManagerOptions(config?: OpenAIModelManagerConfig): ModelManagerOptions<"openai-responses"> {
 	const apiKey = config?.apiKey;
-	const baseUrl = config?.baseUrl?.trim() || $env.OPENAI_BASE_URL?.trim() || OPENAI_DEFAULT_BASE_URL;
+	const baseUrl =
+		config?.baseUrl?.trim() ||
+		$inheritedEnv("OPENAI_BASE_URL") ||
+		$env.OPENAI_BASE_URL?.trim() ||
+		OPENAI_DEFAULT_BASE_URL;
 	const references = createBundledReferenceMap<"openai-responses">("openai");
 	return {
 		providerId: "openai",
