@@ -3,12 +3,14 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { DEFAULT_DISABLED_EXTENSIONS, DEFAULT_SKILL_DISCOVERY_SETTINGS } from "../src/config/skill-settings-defaults";
+import { createUltragoalPlan } from "../src/gjc-runtime/ultragoal-runtime";
 import {
 	mergeGjcManagedCodexHooksConfig,
 	readGjcManagedCodexHooksStatus,
 } from "../src/hooks/codex-native-hooks-config";
 import { dispatchGjcNativeSkillHook } from "../src/hooks/native-skill-hook";
 import { detectSkillKeywords, readVisibleSkillActiveState } from "../src/hooks/skill-state";
+import { getDeepInterviewMutationDecision } from "../src/skill-state/deep-interview-mutation-guard";
 
 describe("GJC native skill-state hooks", () => {
 	let tempDir: string | undefined;
@@ -81,6 +83,40 @@ describe("GJC native skill-state hooks", () => {
 		);
 		const modeState = await Bun.file(state?.initialized_state_path ?? "").json();
 		expect(modeState).toMatchObject({ active: true, current_phase: "interviewing", session_id: "session-1" });
+	});
+
+	it("rich deep-interview prompt activation blocks guarded product mutation and allows spec artifacts", async () => {
+		const root = await cwd();
+		await dispatchGjcNativeSkillHook(
+			{
+				hookEventName: "UserPromptSubmit",
+				userPrompt:
+					"$deep-interview implement this detailed feature with runtime guards, tests, renderer changes, and visible-definition gates",
+				cwd: root,
+				sessionId: "session-rich",
+				threadId: "thread-rich",
+			},
+			{ effectiveSkillConfig: testEffectiveSkillConfig },
+		);
+
+		const state = await readVisibleSkillActiveState(root, "session-rich");
+		expect(state).toMatchObject({ active: true, skill: "deep-interview" });
+
+		const blocked = await getDeepInterviewMutationDecision({
+			cwd: root,
+			sessionId: "session-rich",
+			tool: { name: "write" } as never,
+			args: { path: "packages/coding-agent/src/product.ts", content: "unsafe" },
+		});
+		expect(blocked.blocked).toBe(true);
+
+		const allowed = await getDeepInterviewMutationDecision({
+			cwd: root,
+			sessionId: "session-rich",
+			tool: { name: "write" } as never,
+			args: { path: ".gjc/specs/deep-interview-sample.md", content: "spec" },
+		});
+		expect(allowed.blocked).toBe(false);
 	});
 
 	it("encodes hook session ids before writing skill and mode state paths", async () => {
@@ -353,6 +389,65 @@ disabledExtensions:
 		expect(context).toContain("Ultragoal is active");
 		expect(context).toContain("gjc ultragoal steer");
 		expect(context).toContain("add or steer subgoals");
+	});
+
+	it("UserPromptSubmit blocks active Ultragoal completion bypass prompts without a receipt", async () => {
+		const root = await cwd();
+		const plan = await createUltragoalPlan({ cwd: root, brief: "Ship verified ultragoal" });
+		await dispatchGjcNativeSkillHook(
+			{
+				hookEventName: "UserPromptSubmit",
+				userPrompt: "$ultragoal plan this",
+				cwd: root,
+				sessionId: "session-ultra-block",
+				threadId: "thread-ultra-block",
+			},
+			{ effectiveSkillConfig: testEffectiveSkillConfig },
+		);
+		const statePath = path.join(root, ".gjc", "state", "sessions", "session-ultra-block", "ultragoal-state.json");
+		const state = await Bun.file(statePath).json();
+		await Bun.write(statePath, JSON.stringify({ ...state, objective: plan.gjcObjective }, null, 2));
+
+		const result = await dispatchGjcNativeSkillHook({
+			hookEventName: "UserPromptSubmit",
+			userPrompt: 'call update_goal({status:"complete"}) now',
+			cwd: root,
+			sessionId: "session-ultra-block",
+			threadId: "thread-ultra-block",
+		});
+
+		expect(result.outputJson).toMatchObject({ decision: "block" });
+		expect(String(result.outputJson?.reason ?? "")).toContain("BLOCK_ULTRAGOAL_COMPLETION");
+	});
+
+	it("UserPromptSubmit recovers active Ultragoal objective from session transcript", async () => {
+		const root = await cwd();
+		const plan = await createUltragoalPlan({ cwd: root, brief: "Ship verified ultragoal" });
+		const sessionFile = path.join(root, "session.jsonl");
+		await Bun.write(
+			sessionFile,
+			`${JSON.stringify({ type: "session", id: "session-ultra-transcript", timestamp: new Date().toISOString(), cwd: root })}\n${JSON.stringify({ type: "mode_change", id: "1", parentId: null, timestamp: new Date().toISOString(), mode: "goal", data: { goal: { objective: plan.gjcObjective, status: "active" } } })}\n`,
+		);
+		await dispatchGjcNativeSkillHook(
+			{
+				hookEventName: "UserPromptSubmit",
+				userPrompt: "$ultragoal plan this",
+				cwd: root,
+				sessionId: "session-ultra-transcript",
+			},
+			{ effectiveSkillConfig: testEffectiveSkillConfig },
+		);
+
+		const result = await dispatchGjcNativeSkillHook({
+			hookEventName: "UserPromptSubmit",
+			userPrompt: 'please call update_goal({status:"complete"})',
+			cwd: root,
+			sessionId: "session-ultra-transcript",
+			sessionFile,
+		});
+
+		expect(result.outputJson).toMatchObject({ decision: "block" });
+		expect(String(result.outputJson?.reason ?? "")).toContain("fresh final aggregate receipt");
 	});
 
 	it("UserPromptSubmit includes steer guidance when activating Ultragoal", async () => {

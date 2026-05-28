@@ -80,6 +80,47 @@ export const MODEL_ROLES: Record<ModelRole, ModelRoleInfo> = {
 
 export const MODEL_ROLE_IDS: ModelRole[] = ["default", "smol", "slow", "vision", "plan", "designer", "commit", "task"];
 
+export type GjcModelAssignmentTargetId = "default" | "executor" | "architect" | "planner" | "critic";
+
+export interface GjcModelAssignmentTargetInfo extends ModelRoleInfo {
+	id: GjcModelAssignmentTargetId;
+	settingsPath: "modelRoles" | "task.agentModelOverrides";
+}
+
+export const GJC_MODEL_ASSIGNMENT_TARGET_IDS: GjcModelAssignmentTargetId[] = [
+	"default",
+	"executor",
+	"architect",
+	"planner",
+	"critic",
+];
+
+export const GJC_MODEL_ASSIGNMENT_TARGETS: Record<GjcModelAssignmentTargetId, GjcModelAssignmentTargetInfo> = {
+	default: { id: "default", tag: "DEFAULT", name: "Default", color: "success", settingsPath: "modelRoles" },
+	executor: {
+		id: "executor",
+		tag: "EXECUTOR",
+		name: "Executor",
+		color: "accent",
+		settingsPath: "task.agentModelOverrides",
+	},
+	architect: {
+		id: "architect",
+		tag: "ARCHITECT",
+		name: "Architect",
+		color: "muted",
+		settingsPath: "task.agentModelOverrides",
+	},
+	planner: {
+		id: "planner",
+		tag: "PLANNER",
+		name: "Planner",
+		color: "warning",
+		settingsPath: "task.agentModelOverrides",
+	},
+	critic: { id: "critic", tag: "CRITIC", name: "Critic", color: "error", settingsPath: "task.agentModelOverrides" },
+};
+
 /** Alias for ModelRoleInfo - used for both built-in and custom roles */
 export type RoleInfo = ModelRoleInfo;
 

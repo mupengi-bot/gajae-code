@@ -1,7 +1,15 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { ThinkingLevel } from "@gajae-code/agent-core";
+import { type Model, modelsAreEqual } from "@gajae-code/ai";
 import { getOAuthProviders } from "@gajae-code/ai/utils/oauth";
 import { setProjectDir } from "@gajae-code/utils";
+import {
+	GJC_MODEL_ASSIGNMENT_TARGET_IDS,
+	GJC_MODEL_ASSIGNMENT_TARGETS,
+	type GjcModelAssignmentTargetId,
+} from "../config/model-registry";
+import { extractExplicitThinkingSelector, formatModelSelectorValue, parseModelPattern } from "../config/model-resolver";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../discovery/helpers.js";
 import { resolveMemoryBackend } from "../memory-backend";
 import type { InteractiveModeContext } from "../modes/types";
@@ -11,6 +19,7 @@ import {
 	formatProviderSetupResult,
 	parseProviderCompatibility,
 } from "../setup/provider-onboarding";
+import { parseThinkingLevel } from "../thinking";
 import { formatDuration } from "./helpers/format";
 import { commandConsumed, errorMessage, parseSlashCommand, usage } from "./helpers/parse";
 import { handleSshAcp } from "./helpers/ssh";
@@ -92,8 +101,82 @@ function providerSetupUsage(): string {
 	].join("\n");
 }
 
-function modelSelectionUsage(currentModelLine?: string): string {
-	return [currentModelLine, formatModelOnboardingGuidance()]
+function formatModelAssignmentSummary(runtime: SlashCommandRuntime): string {
+	const agentModelOverrides = runtime.settings.get("task.agentModelOverrides");
+	const lines = ["Model assignments:"];
+	for (const targetId of GJC_MODEL_ASSIGNMENT_TARGET_IDS) {
+		const target = GJC_MODEL_ASSIGNMENT_TARGETS[targetId];
+		const modelSelector =
+			target.settingsPath === "modelRoles" ? runtime.settings.getModelRole(targetId) : agentModelOverrides[targetId];
+		lines.push(`  ${target.tag ?? target.id.toUpperCase()} (${target.name}): ${modelSelector ?? "(unset)"}`);
+	}
+	return lines.join("\n");
+}
+
+function parseModelCommandArgs(args: string): { targetId: GjcModelAssignmentTargetId; selector: string } {
+	const tokens = args.trim().split(/\s+/).filter(Boolean);
+	const first = tokens[0]?.toLowerCase();
+	const explicitTarget = GJC_MODEL_ASSIGNMENT_TARGET_IDS.includes(first as GjcModelAssignmentTargetId)
+		? (first as GjcModelAssignmentTargetId)
+		: undefined;
+	if (explicitTarget) {
+		return { targetId: explicitTarget, selector: tokens.slice(1).join(" ") };
+	}
+	if (first === "set") {
+		const second = tokens[1]?.toLowerCase();
+		if (GJC_MODEL_ASSIGNMENT_TARGET_IDS.includes(second as GjcModelAssignmentTargetId)) {
+			return { targetId: second as GjcModelAssignmentTargetId, selector: tokens.slice(2).join(" ") };
+		}
+	}
+	return { targetId: "default", selector: args.trim() };
+}
+
+function splitExplicitThinkingSelector(selector: string): { baseSelector: string; thinkingLevel?: ThinkingLevel } {
+	const trimmed = selector.trim();
+	const colonIndex = trimmed.lastIndexOf(":");
+	if (colonIndex === -1) {
+		return { baseSelector: trimmed };
+	}
+	const thinkingLevel = parseThinkingLevel(trimmed.slice(colonIndex + 1));
+	return thinkingLevel ? { baseSelector: trimmed.slice(0, colonIndex), thinkingLevel } : { baseSelector: trimmed };
+}
+
+function resolveModelCommandSelection(
+	runtime: SlashCommandRuntime,
+	selector: string,
+): { model: Model; selector: string; thinkingLevel?: ThinkingLevel } | undefined {
+	const availableModels = runtime.session.getAvailableModels?.() ?? [];
+	const matchPreferences = { usageOrder: runtime.settings.getStorage()?.getModelUsageOrder() };
+	const resolved = parseModelPattern(selector, availableModels, matchPreferences, {
+		modelRegistry: runtime.session.modelRegistry,
+	});
+	if (!resolved.model) {
+		return undefined;
+	}
+
+	const splitSelector = splitExplicitThinkingSelector(selector);
+	const canonicalModel = runtime.session.modelRegistry.resolveCanonicalModel?.(splitSelector.baseSelector, {
+		availableOnly: false,
+		candidates: availableModels,
+	});
+	const persistedSelector =
+		canonicalModel && modelsAreEqual(canonicalModel, resolved.model)
+			? splitSelector.baseSelector
+			: `${resolved.model.provider}/${resolved.model.id}`;
+	return {
+		model: resolved.model,
+		selector: persistedSelector,
+		thinkingLevel: resolved.explicitThinkingLevel ? resolved.thinkingLevel : undefined,
+	};
+}
+
+function modelSelectionUsage(runtime: SlashCommandRuntime, currentModelLine?: string): string {
+	return [
+		currentModelLine,
+		formatModelAssignmentSummary(runtime),
+		"ACP/text mode: use /model <model> for DEFAULT, or /model <target> <model> for EXECUTOR, ARCHITECT, PLANNER, or CRITIC.",
+		formatModelOnboardingGuidance(),
+	]
 		.filter((line): line is string => Boolean(line))
 		.join("\n\n");
 }
@@ -159,25 +242,60 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		aliases: ["models"],
 		description: "Select model (opens selector UI)",
 		acpDescription: "Show current model selection",
+		inlineHint: "[target] <model>",
+		acpInputHint: "[target] <model>",
 		handle: async (command, runtime) => {
 			if (command.args) {
-				const modelId = command.args.trim();
-				const availableModels = runtime.session.getAvailableModels?.() ?? [];
-				const match = availableModels.find(
-					model => model.id === modelId || `${model.provider}/${model.id}` === modelId,
-				);
-				if (!match) {
+				const parsedArgs = parseModelCommandArgs(command.args);
+				const modelId = parsedArgs.selector;
+				if (!modelId) {
+					return usage(
+						modelSelectionUsage(runtime, `Missing model for ${parsedArgs.targetId.toUpperCase()}.`),
+						runtime,
+					);
+				}
+				const selection = resolveModelCommandSelection(runtime, modelId);
+				if (!selection) {
 					return usage(
 						modelSelectionUsage(
+							runtime,
 							`Unknown model: ${modelId}. Configure or login to a provider first, then list/select models with /model.`,
 						),
 						runtime,
 					);
 				}
 				try {
-					await runtime.session.setModel(match);
-					await runtime.output(`Model set to ${match.provider}/${match.id}.`);
-					await runtime.notifyTitleChanged?.();
+					const persistedSelector = formatModelSelectorValue(selection.selector, selection.thinkingLevel);
+					if (parsedArgs.targetId === "default") {
+						await runtime.session.setModel(selection.model, "default", {
+							selector: selection.selector,
+							thinkingLevel: selection.thinkingLevel,
+						});
+						if (selection.thinkingLevel) {
+							runtime.session.setThinkingLevel(selection.thinkingLevel);
+						}
+						await runtime.output(`Default model set to ${persistedSelector}.`);
+						await runtime.notifyTitleChanged?.();
+					} else {
+						const apiKey = await runtime.session.modelRegistry.getApiKey(
+							selection.model,
+							runtime.session.sessionId,
+						);
+						if (!apiKey) {
+							throw new Error(`No API key for ${selection.model.provider}/${selection.model.id}`);
+						}
+						const overrides = runtime.settings.get("task.agentModelOverrides");
+						const thinkingLevel =
+							selection.thinkingLevel ??
+							extractExplicitThinkingSelector(overrides[parsedArgs.targetId], runtime.settings);
+						const roleSelector = formatModelSelectorValue(selection.selector, thinkingLevel);
+						runtime.settings.set("task.agentModelOverrides", {
+							...overrides,
+							[parsedArgs.targetId]: roleSelector,
+						});
+						runtime.settings.getStorage()?.recordModelUsage(`${selection.model.provider}/${selection.model.id}`);
+						await runtime.output(`${parsedArgs.targetId} agent model set to ${roleSelector}.`);
+					}
 					await runtime.notifyConfigChanged?.();
 					return commandConsumed();
 				} catch (err) {
@@ -188,6 +306,7 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			const model = runtime.session.model;
 			await runtime.output(
 				modelSelectionUsage(
+					runtime,
 					model ? `Current model: ${model.provider}/${model.id}` : "No model is currently selected.",
 				),
 			);

@@ -3,6 +3,10 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	GJC_MODEL_ASSIGNMENT_TARGET_IDS,
+	GJC_MODEL_ASSIGNMENT_TARGETS,
+} from "@gajae-code/coding-agent/config/model-registry";
+import {
 	DEFAULT_GJC_DEFINITION_NAMES,
 	getDefaultGjcDefinitions,
 	installDefaultGjcDefinitions,
@@ -69,6 +73,17 @@ describe("default GJC definitions", () => {
 			expect(bundledRoleAgents).toEqual([...roleAgentNames].sort());
 			expect(agents.projectAgentsDir).toBeNull();
 		});
+	});
+
+	it("exposes only default plus four GJC role agents as model assignment targets", () => {
+		expect(GJC_MODEL_ASSIGNMENT_TARGET_IDS).toEqual(["default", "executor", "architect", "planner", "critic"]);
+		expect(GJC_MODEL_ASSIGNMENT_TARGET_IDS.map(id => GJC_MODEL_ASSIGNMENT_TARGETS[id].tag)).toEqual([
+			"DEFAULT",
+			"EXECUTOR",
+			"ARCHITECT",
+			"PLANNER",
+			"CRITIC",
+		]);
 	});
 
 	it("enforces role-agent tool boundaries through parsed frontmatter", () => {
@@ -167,6 +182,30 @@ Project executor override body.
 		expect(ultragoal).toContain("the subagent has actually failed");
 		expect(ultragoal).toContain("gone off-track");
 		expect(ultragoal).toContain("become unrecoverably wrong");
+	});
+
+	it("keeps bundled deep-interview skill on GJC-native workflow vocabulary", () => {
+		const deepInterview = getDefaultGjcDefinitions().find(definition => definition.name === "deep-interview");
+		expect(deepInterview).toBeDefined();
+		const content = deepInterview?.content ?? "";
+
+		for (const required of ["ask", ".gjc/state", "pending approval"]) {
+			expect(content).toContain(required);
+		}
+		expect(content).toMatch(/\/skill:ralplan|gjc ralplan/);
+		expect(content).toMatch(/\/skill:team|gjc team/);
+
+		for (const forbidden of [
+			"AskUserQuestion",
+			"AskUserQuestionTool",
+			"state_write",
+			"state_read",
+			"Skill(",
+			"gajae-code:",
+			"/gajae-code",
+		]) {
+			expect(content).not.toContain(forbidden);
+		}
 	});
 
 	it("installs bundled workflow skill definitions without overwriting local edits unless forced", async () => {

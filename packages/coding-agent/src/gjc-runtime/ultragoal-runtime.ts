@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { DEFAULT_ULTRAGOAL_OBJECTIVE } from "./goal-mode-request";
@@ -23,6 +24,7 @@ export interface UltragoalGoal {
 	completedAt?: string;
 	evidence?: string;
 	steering?: Record<string, unknown>;
+	completionVerification?: UltragoalCompletionVerification;
 }
 
 export interface UltragoalPlan {
@@ -34,6 +36,36 @@ export interface UltragoalPlan {
 	goals: UltragoalGoal[];
 	createdAt: string;
 	updatedAt: string;
+}
+
+export type UltragoalReceiptKind = "per-goal" | "final-aggregate";
+
+export interface UltragoalCompletionVerification {
+	schemaVersion: 1;
+	receiptId: string;
+	verifiedAt: string;
+	goalId: string;
+	receiptKind: UltragoalReceiptKind;
+	goalStatusBeforeCheckpoint: UltragoalGoalStatus;
+	gjcGoalMode: UltragoalGjcGoalMode;
+	gjcObjective: string;
+	qualityGateHash: string;
+	planGeneration: string;
+	basis: {
+		planHashBeforeCheckpoint: string;
+		latestRelevantLedgerEventIdBeforeCheckpoint: string | null;
+		goalUpdatedAtBeforeCheckpoint: string;
+		relevantGoalIdsBeforeCheckpoint: string[];
+		requiredGoalSetHashBeforeCheckpoint: string;
+	};
+	checkpointLedgerEventId: string;
+}
+
+export interface UltragoalLedgerEvent extends JsonObject {
+	eventId?: string;
+	event?: string;
+	goalId?: string;
+	timestamp?: string;
 }
 
 export interface UltragoalPaths {
@@ -65,7 +97,32 @@ interface JsonObject {
 }
 
 const TERMINAL_OR_SKIPPED_STATUSES = new Set<UltragoalGoalStatus>(["complete", "superseded"]);
+const CLEAN_ARCHITECT_STATUS = "CLEAR";
+const APPROVE_RECOMMENDATION = "APPROVE";
+const PASSED_STATUS = "passed";
+
 const SCHEDULABLE_STATUSES = new Set<UltragoalGoalStatus>(["pending", "active", "failed"]);
+
+function stableStructuredValue(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(item => stableStructuredValue(item));
+	if (value && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		const output: Record<string, unknown> = {};
+		for (const key of Object.keys(record).sort()) {
+			const item = record[key];
+			if (item !== undefined) output[key] = stableStructuredValue(item);
+		}
+		return output;
+	}
+	return value;
+}
+
+export function hashStructuredValue(value: unknown): string {
+	return crypto
+		.createHash("sha256")
+		.update(JSON.stringify(stableStructuredValue(value)))
+		.digest("hex");
+}
 
 export function getUltragoalPaths(cwd: string): UltragoalPaths {
 	const dir = path.join(cwd, ".gjc", "ultragoal");
@@ -87,11 +144,30 @@ async function ensureUltragoalDir(paths: UltragoalPaths): Promise<void> {
 	await fs.mkdir(paths.dir, { recursive: true });
 }
 
-async function appendLedger(cwd: string, event: JsonObject): Promise<void> {
+async function appendLedger(cwd: string, event: JsonObject): Promise<UltragoalLedgerEvent> {
 	const paths = getUltragoalPaths(cwd);
 	await ensureUltragoalDir(paths);
-	const entry = { ...event, timestamp: new Date().toISOString() };
+	const entry: UltragoalLedgerEvent = {
+		eventId: typeof event.eventId === "string" ? event.eventId : crypto.randomUUID(),
+		...event,
+		timestamp: new Date().toISOString(),
+	};
 	await fs.appendFile(paths.ledgerPath, `${JSON.stringify(entry)}\n`);
+	return entry;
+}
+
+export async function readUltragoalLedger(cwd: string): Promise<UltragoalLedgerEvent[]> {
+	try {
+		const raw = await Bun.file(getUltragoalPaths(cwd).ledgerPath).text();
+		return raw
+			.split(/\r?\n/)
+			.map(line => line.trim())
+			.filter(line => line.length > 0)
+			.map(line => JSON.parse(line) as UltragoalLedgerEvent);
+	} catch (error) {
+		if (isEnoent(error)) return [];
+		throw error;
+	}
 }
 
 async function writePlan(cwd: string, plan: UltragoalPlan): Promise<void> {
@@ -158,6 +234,10 @@ function normalizePlan(raw: unknown): UltragoalPlan {
 			steering:
 				typeof goalRecord.steering === "object" && goalRecord.steering !== null
 					? (goalRecord.steering as Record<string, unknown>)
+					: undefined,
+			completionVerification:
+				typeof goalRecord.completionVerification === "object" && goalRecord.completionVerification !== null
+					? (goalRecord.completionVerification as UltragoalCompletionVerification)
 					: undefined,
 		};
 	});
@@ -303,6 +383,201 @@ async function readStructuredValue(cwd: string, value: string): Promise<unknown>
 		throw error;
 	}
 }
+function qualityGateObject(value: unknown): JsonObject | null {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as JsonObject) : null;
+}
+
+function requiredReceiptGoals(plan: UltragoalPlan): UltragoalGoal[] {
+	return plan.goals.filter(goal => goal.status !== "superseded");
+}
+
+function chooseReceiptKind(
+	plan: UltragoalPlan,
+	goal: UltragoalGoal,
+	status: UltragoalGoalStatus,
+): UltragoalReceiptKind {
+	if (status !== "complete") return "per-goal";
+	const incomplete = requiredReceiptGoals(plan).filter(item => item.id !== goal.id && item.status !== "complete");
+	return incomplete.length === 0 ? "final-aggregate" : "per-goal";
+}
+
+function relevantGoalIds(plan: UltragoalPlan, goal: UltragoalGoal, receiptKind: UltragoalReceiptKind): string[] {
+	const ids = receiptKind === "final-aggregate" ? requiredReceiptGoals(plan).map(item => item.id) : [goal.id];
+	return [...new Set(ids)].sort();
+}
+
+function ledgerEventTouchesGoals(event: UltragoalLedgerEvent, goalIds: readonly string[]): boolean {
+	if (typeof event.goalId === "string" && goalIds.includes(event.goalId)) return true;
+	const eventGoalIds = Array.isArray(event.goalIds) ? event.goalIds : [];
+	return eventGoalIds.some(item => typeof item === "string" && goalIds.includes(item));
+}
+
+export function computeUltragoalPlanGeneration(input: {
+	plan: UltragoalPlan;
+	ledger: readonly UltragoalLedgerEvent[];
+	goal: UltragoalGoal;
+	receiptKind: UltragoalReceiptKind;
+	beforeStatus: UltragoalGoalStatus;
+	excludeEventId?: string;
+}): UltragoalCompletionVerification["basis"] & { planGeneration: string } {
+	const goalIds = relevantGoalIds(input.plan, input.goal, input.receiptKind);
+	const planBeforeCheckpoint = structuredClone(input.plan) as UltragoalPlan;
+	const goalBeforeCheckpoint = planBeforeCheckpoint.goals.find(goal => goal.id === input.goal.id);
+	const receipt = input.goal.completionVerification;
+	const goalUpdatedAtBeforeCheckpoint = receipt?.basis.goalUpdatedAtBeforeCheckpoint ?? input.goal.updatedAt;
+	if (goalBeforeCheckpoint) {
+		goalBeforeCheckpoint.status = input.beforeStatus;
+		goalBeforeCheckpoint.updatedAt = goalUpdatedAtBeforeCheckpoint;
+		delete goalBeforeCheckpoint.completedAt;
+		delete goalBeforeCheckpoint.completionVerification;
+	}
+	const relevantLedger = input.ledger.filter(event => {
+		if (input.excludeEventId && event.eventId === input.excludeEventId) return false;
+		return ledgerEventTouchesGoals(event, goalIds);
+	});
+	const latestRelevantEvent = relevantLedger.at(-1) ?? null;
+	const basis = {
+		planHashBeforeCheckpoint: hashStructuredValue(planBeforeCheckpoint),
+		latestRelevantLedgerEventIdBeforeCheckpoint:
+			typeof latestRelevantEvent?.eventId === "string" ? latestRelevantEvent.eventId : null,
+		goalUpdatedAtBeforeCheckpoint,
+		relevantGoalIdsBeforeCheckpoint: goalIds,
+		requiredGoalSetHashBeforeCheckpoint: hashStructuredValue(goalIds),
+	};
+	return {
+		...basis,
+		planGeneration: hashStructuredValue({
+			receiptKind: input.receiptKind,
+			goalId: input.goal.id,
+			beforeStatus: input.beforeStatus,
+			basis,
+		}),
+	};
+}
+
+function buildCompletionReceipt(input: {
+	plan: UltragoalPlan;
+	ledger: readonly UltragoalLedgerEvent[];
+	goal: UltragoalGoal;
+	receiptKind: UltragoalReceiptKind;
+	beforeStatus: UltragoalGoalStatus;
+	qualityGateJson: JsonObject;
+	now: string;
+	checkpointLedgerEventId: string;
+}): UltragoalCompletionVerification {
+	const generation = computeUltragoalPlanGeneration({
+		plan: input.plan,
+		ledger: input.ledger,
+		goal: input.goal,
+		receiptKind: input.receiptKind,
+		beforeStatus: input.beforeStatus,
+		excludeEventId: input.checkpointLedgerEventId,
+	});
+	return {
+		schemaVersion: 1,
+		receiptId: crypto.randomUUID(),
+		verifiedAt: input.now,
+		goalId: input.goal.id,
+		receiptKind: input.receiptKind,
+		goalStatusBeforeCheckpoint: input.beforeStatus,
+		gjcGoalMode: input.plan.gjcGoalMode,
+		gjcObjective: input.plan.gjcObjective,
+		qualityGateHash: hashStructuredValue(input.qualityGateJson),
+		planGeneration: generation.planGeneration,
+		basis: {
+			planHashBeforeCheckpoint: generation.planHashBeforeCheckpoint,
+			latestRelevantLedgerEventIdBeforeCheckpoint: generation.latestRelevantLedgerEventIdBeforeCheckpoint,
+			goalUpdatedAtBeforeCheckpoint: generation.goalUpdatedAtBeforeCheckpoint,
+			relevantGoalIdsBeforeCheckpoint: generation.relevantGoalIdsBeforeCheckpoint,
+			requiredGoalSetHashBeforeCheckpoint: generation.requiredGoalSetHashBeforeCheckpoint,
+		},
+		checkpointLedgerEventId: input.checkpointLedgerEventId,
+	};
+}
+function nonEmptyStringArray(value: unknown): string[] | null {
+	if (!Array.isArray(value)) return null;
+	const items = value.filter(item => typeof item === "string" && item.trim().length > 0);
+	return items.length === value.length && items.length > 0 ? items : null;
+}
+
+function emptyArray(value: unknown): boolean {
+	return Array.isArray(value) && value.length === 0;
+}
+
+function assertCleanSection(
+	section: JsonObject | null,
+	checks: Record<string, string>,
+	commandField: string,
+	pathPrefix: string,
+): void {
+	if (!section) throw new Error(`qualityGate.${pathPrefix} is required`);
+	for (const [field, expected] of Object.entries(checks)) {
+		if (section[field] !== expected) throw new Error(`qualityGate.${pathPrefix}.${field} must be ${expected}`);
+	}
+	if (!nonEmptyString(section.evidence)) throw new Error(`qualityGate.${pathPrefix}.evidence is required`);
+	if (!nonEmptyStringArray(section[commandField]))
+		throw new Error(`qualityGate.${pathPrefix}.${commandField} is required`);
+	if (!emptyArray(section.blockers)) throw new Error(`qualityGate.${pathPrefix}.blockers must be empty`);
+}
+
+async function readRequiredCompletionQualityGate(cwd: string, value: string | undefined): Promise<JsonObject> {
+	if (!value?.trim()) {
+		throw new Error("complete checkpoints require --quality-gate-json; requires --quality-gate-json");
+	}
+	const gate = await readStructuredValue(cwd, value);
+	const gateObject = qualityGateObject(gate);
+	if (!gateObject) throw new Error("qualityGate must be a JSON object");
+	const legacyCodeReview = qualityGateObject(gateObject.codeReview);
+	if (
+		legacyCodeReview &&
+		(legacyCodeReview.recommendation !== APPROVE_RECOMMENDATION ||
+			legacyCodeReview.architectStatus !== CLEAN_ARCHITECT_STATUS)
+	) {
+		throw new Error(
+			"checkpoint --status complete requires architect review approval: codeReview.recommendation must be APPROVE and codeReview.architectStatus must be CLEAR",
+		);
+	}
+	const allowedKeys = new Set(["architectReview", "executorQa", "iteration"]);
+	const unsupportedKeys = Object.keys(gateObject).filter(key => !allowedKeys.has(key));
+	if (unsupportedKeys.length > 0) {
+		throw new Error(`qualityGate contains unsupported keys: ${unsupportedKeys.join(", ")}`);
+	}
+	assertCleanSection(
+		qualityGateObject(gateObject.architectReview),
+		{
+			architectureStatus: CLEAN_ARCHITECT_STATUS,
+			productStatus: CLEAN_ARCHITECT_STATUS,
+			codeStatus: CLEAN_ARCHITECT_STATUS,
+			recommendation: APPROVE_RECOMMENDATION,
+		},
+		"commands",
+		"architectReview",
+	);
+	assertCleanSection(
+		qualityGateObject(gateObject.executorQa),
+		{
+			status: PASSED_STATUS,
+			e2eStatus: PASSED_STATUS,
+			redTeamStatus: PASSED_STATUS,
+		},
+		"e2eCommands",
+		"executorQa",
+	);
+	const executorQa = qualityGateObject(gateObject.executorQa);
+	if (!nonEmptyStringArray(executorQa?.redTeamCommands))
+		throw new Error("qualityGate.executorQa.redTeamCommands is required");
+	assertCleanSection(
+		qualityGateObject(gateObject.iteration),
+		{
+			status: PASSED_STATUS,
+		},
+		"rerunCommands",
+		"iteration",
+	);
+	const iteration = qualityGateObject(gateObject.iteration);
+	if (iteration?.fullRerun !== true) throw new Error("qualityGate.iteration.fullRerun must be true");
+	return gateObject;
+}
 
 export async function checkpointUltragoalGoal(input: {
 	cwd: string;
@@ -318,7 +593,44 @@ export async function checkpointUltragoalGoal(input: {
 	if (!goal) throw new Error(`No ultragoal goal found for ${input.goalId}.`);
 	const evidence = input.evidence.trim();
 	if (!evidence) throw new Error("checkpoint evidence is required");
+	const qualityGateJson =
+		input.status === "complete"
+			? await readRequiredCompletionQualityGate(input.cwd, input.qualityGateJson)
+			: input.qualityGateJson
+				? await readStructuredValue(input.cwd, input.qualityGateJson)
+				: undefined;
+	if (input.status === "complete" && !input.gjcGoalJson?.trim()) {
+		throw new Error("complete checkpoints require --gjc-goal-json with a fresh get_goal snapshot");
+	}
 	const now = new Date().toISOString();
+	const ledgerBefore = await readUltragoalLedger(input.cwd);
+	const beforeStatus = goal.status;
+	if (input.status === "complete") {
+		const blockedGoalId =
+			typeof goal.steering?.kind === "string" && goal.steering.kind === "review_blocker"
+				? nonEmptyString(goal.steering.blockedGoalId)
+				: null;
+		const blockedGoal = blockedGoalId ? plan.goals.find(item => item.id === blockedGoalId) : undefined;
+		if (blockedGoal?.status === "review_blocked") {
+			blockedGoal.status = "superseded";
+			blockedGoal.evidence = `Resolved by verification blocker story ${goal.id}: ${evidence}`;
+			blockedGoal.updatedAt = now;
+		}
+	}
+	const receiptKind = input.status === "complete" ? chooseReceiptKind(plan, goal, input.status) : null;
+	const pendingCheckpointEventId = crypto.randomUUID();
+	if (input.status === "complete" && receiptKind && qualityGateJson && !Array.isArray(qualityGateJson)) {
+		goal.completionVerification = buildCompletionReceipt({
+			plan,
+			ledger: ledgerBefore,
+			goal,
+			receiptKind,
+			beforeStatus,
+			qualityGateJson: qualityGateJson as JsonObject,
+			now,
+			checkpointLedgerEventId: pendingCheckpointEventId,
+		});
+	}
 	goal.status = input.status;
 	goal.evidence = evidence;
 	goal.updatedAt = now;
@@ -326,12 +638,13 @@ export async function checkpointUltragoalGoal(input: {
 	plan.updatedAt = now;
 	await writePlan(input.cwd, plan);
 	await appendLedger(input.cwd, {
+		eventId: pendingCheckpointEventId,
 		event: "goal_checkpointed",
 		goalId: goal.id,
 		status: input.status,
 		evidence,
 		gjcGoalJson: input.gjcGoalJson ? await readStructuredValue(input.cwd, input.gjcGoalJson) : undefined,
-		qualityGateJson: input.qualityGateJson ? await readStructuredValue(input.cwd, input.qualityGateJson) : undefined,
+		qualityGateJson,
 	});
 	return plan;
 }
@@ -480,7 +793,8 @@ function renderCompleteHandoff(
 		`Ultragoal handoff: ${result.goal.id} — ${result.goal.title}`,
 		`Objective: ${result.goal.objective}`,
 		`GJC objective: ${result.plan.gjcObjective}`,
-		"Call get_goal({}); create_goal only if no active GJC goal exists, then complete this GJC story and checkpoint it.",
+		"Call get_goal({}); create_goal only if no active GJC goal exists, then complete this GJC story.",
+		"Before checkpointing complete, obtain a passing architectReview (architecture/product/code CLEAR + APPROVE) and executorQa (e2e/red-team passed); record blockers instead of completing on any finding.",
 		"",
 	].join("\n");
 }
