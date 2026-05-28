@@ -403,6 +403,80 @@ assertEqual(calls[0]?.url, "https://runtime-gateway.example.com/v1/responses", "
 			"OPENAI_BASE_URL=https://dotenv-openai.example.com/v1\n",
 		);
 	});
+	it("does not apply direct OpenAI Responses session or prompt-cache fields to proxy-shaped configured base URLs", () => {
+		runProviderIsolationScript(
+			`${openAIProviderIsolationPrelude()}
+Bun.env.OPENAI_BASE_URL = "https://fallback-openai.example.com/v1";
+
+const calls: Array<{
+	url: string;
+	sessionId: string | null;
+	clientRequestId: string | null;
+	promptCacheKey?: unknown;
+	promptCacheRetention?: unknown;
+}> = [];
+const customFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+	const body = JSON.parse(String(init?.body ?? "{}")) as {
+		prompt_cache_key?: unknown;
+		prompt_cache_retention?: unknown;
+	};
+	const headers = new Headers(init?.headers);
+	calls.push({
+		url: String(input instanceof Request ? input.url : input),
+		sessionId: headers.get("session_id"),
+		clientRequestId: headers.get("x-client-request-id"),
+		promptCacheKey: body.prompt_cache_key,
+		promptCacheRetention: body.prompt_cache_retention,
+	});
+	return sse([
+		{ type: "response.created", response: { id: "resp_test" } },
+		{
+			type: "response.completed",
+			response: {
+				id: "resp_test",
+				status: "completed",
+				usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 },
+			},
+		},
+	]);
+};
+
+await streamOpenAIResponses(
+	{ ...responsesModel, baseUrl: "https://api.openai.com.proxy.example.com/v1" },
+	baseContext(),
+	{
+		apiKey: "test-key",
+		cacheRetention: "long",
+		fetch: customFetch,
+		sessionId: "proxy-session",
+	},
+).result();
+await streamOpenAIResponses(
+	{ ...responsesModel, baseUrl: "https://proxy.example.com/api.openai.com/v1" },
+	baseContext(),
+	{
+		apiKey: "test-key",
+		cacheRetention: "long",
+		fetch: customFetch,
+		sessionId: "path-session",
+	},
+).result();
+
+assertEqual(calls[0]?.url, "https://api.openai.com.proxy.example.com/v1/responses", "host proxy URL");
+assertEqual(calls[0]?.sessionId, null, "host proxy session header");
+assertEqual(calls[0]?.clientRequestId, null, "host proxy request id header");
+assertEqual(String(calls[0]?.promptCacheKey), "proxy-session", "host proxy prompt cache key");
+assertEqual(calls[0]?.promptCacheRetention as string | undefined, undefined, "host proxy prompt cache retention");
+assertEqual(calls[1]?.url, "https://proxy.example.com/api.openai.com/v1/responses", "path proxy URL");
+assertEqual(calls[1]?.sessionId, null, "path proxy session header");
+assertEqual(calls[1]?.clientRequestId, null, "path proxy request id header");
+assertEqual(String(calls[1]?.promptCacheKey), "path-session", "path proxy prompt cache key");
+assertEqual(calls[1]?.promptCacheRetention as string | undefined, undefined, "path proxy prompt cache retention");
+`,
+			{ OPENAI_BASE_URL: "https://inherited-openai.example.com/v1" },
+			"OPENAI_BASE_URL=https://dotenv-openai.example.com/v1\n",
+		);
+	});
 
 	it("keeps OAuth OpenAI Responses on the default API base URL ahead of inherited and fallback OPENAI_BASE_URL", () => {
 		runProviderIsolationScript(

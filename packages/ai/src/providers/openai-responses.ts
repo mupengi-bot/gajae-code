@@ -69,11 +69,11 @@ import { transformMessages } from "./transform-messages";
  * Get prompt cache retention based on cacheRetention and base URL.
  * Only applies to direct OpenAI API calls (api.openai.com).
  */
-function getPromptCacheRetention(baseUrl: string, cacheRetention: CacheRetention): "24h" | undefined {
+function getPromptCacheRetention(baseUrl: string | undefined, cacheRetention: CacheRetention): "24h" | undefined {
 	if (cacheRetention !== "long") {
 		return undefined;
 	}
-	if (baseUrl.includes("api.openai.com")) {
+	if (baseUrl && isDefaultOpenAIBaseUrl(baseUrl)) {
 		return "24h";
 	}
 	return undefined;
@@ -103,6 +103,17 @@ const OPENAI_RESPONSES_PROVIDER_SESSION_STATE_PREFIX = "openai-responses:";
 const OPENAI_RESPONSES_FIRST_EVENT_TIMEOUT_MESSAGE =
 	"OpenAI responses stream timed out while waiting for the first event";
 const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1";
+const OPENAI_DEFAULT_BASE_URL_HOST = "api.openai.com";
+
+function isDefaultOpenAIBaseUrl(baseUrl: string): boolean {
+	try {
+		const url = new URL(baseUrl);
+		return url.hostname === OPENAI_DEFAULT_BASE_URL_HOST && (url.pathname === "" || url.pathname === "/v1");
+	} catch {
+		return baseUrl === OPENAI_DEFAULT_BASE_URL;
+	}
+}
+
 
 function resolveOpenAIProviderBaseUrl(
 	baseUrl: string | undefined,
@@ -111,7 +122,7 @@ function resolveOpenAIProviderBaseUrl(
 	if (authCredentialType === "oauth") return OPENAI_DEFAULT_BASE_URL;
 	const envBaseUrl = $inheritedEnv("OPENAI_BASE_URL") ?? $env.OPENAI_BASE_URL?.trim();
 	const configuredBaseUrl = baseUrl?.trim();
-	if (envBaseUrl && (!configuredBaseUrl || configuredBaseUrl.toLowerCase().includes("api.openai.com"))) {
+	if (envBaseUrl && (!configuredBaseUrl || isDefaultOpenAIBaseUrl(configuredBaseUrl))) {
 		return envBaseUrl;
 	}
 	return configuredBaseUrl || envBaseUrl || OPENAI_DEFAULT_BASE_URL;
@@ -363,7 +374,7 @@ function createClient(
 		copilotPremiumRequests = copilot.premiumRequests;
 		baseUrl = resolveGitHubCopilotBaseUrl(model.baseUrl, rawApiKey) ?? model.baseUrl;
 	}
-	if (sessionId && model.provider === "openai" && (baseUrl ?? "").toLowerCase().includes("api.openai.com")) {
+	if (sessionId && model.provider === "openai" && baseUrl && isDefaultOpenAIBaseUrl(baseUrl)) {
 		headers.session_id ??= sessionId;
 		headers["x-client-request-id"] ??= sessionId;
 	}
@@ -434,7 +445,7 @@ function buildParams(
 		instructions: systemInstructions,
 		stream: true,
 		prompt_cache_key: promptCacheKey,
-		prompt_cache_retention: promptCacheKey ? getPromptCacheRetention(model.baseUrl, cacheRetention) : undefined,
+		prompt_cache_retention: promptCacheKey ? getPromptCacheRetention(resolvedBaseUrl ?? model.baseUrl, cacheRetention) : undefined,
 		store: false,
 		stream_options: model.provider === "openai" ? { include_obfuscation: false } : undefined,
 	};
@@ -482,24 +493,25 @@ function isAzureOpenAIBaseUrl(baseUrl: string): boolean {
 function supportsStrictMode(model: Model<"openai-responses">): boolean {
 	if (model.provider === "openai" || model.provider === "azure" || model.provider === "github-copilot") return true;
 
-	const baseUrl = model.baseUrl.toLowerCase();
+	const baseUrl = model.baseUrl;
+	const lowerBaseUrl = baseUrl.toLowerCase();
 	return (
-		baseUrl.includes("api.openai.com") ||
-		baseUrl.includes(".openai.azure.com") ||
-		baseUrl.includes("models.inference.ai.azure.com")
+		isDefaultOpenAIBaseUrl(baseUrl) ||
+		lowerBaseUrl.includes(".openai.azure.com") ||
+		lowerBaseUrl.includes("models.inference.ai.azure.com")
 	);
 }
 
 export function supportsDeveloperRole(modelOrBaseUrl: Pick<Model, "provider" | "baseUrl"> | string): boolean {
-	const baseUrl =
-		typeof modelOrBaseUrl === "string" ? modelOrBaseUrl.toLowerCase() : (modelOrBaseUrl.baseUrl ?? "").toLowerCase();
+	const baseUrl = typeof modelOrBaseUrl === "string" ? modelOrBaseUrl : (modelOrBaseUrl.baseUrl ?? "");
+	const lowerBaseUrl = baseUrl.toLowerCase();
 	return (
-		baseUrl.includes("api.openai.com") ||
-		baseUrl.includes(".openai.azure.com") ||
-		baseUrl.includes("azure.com/openai") ||
-		baseUrl.includes("models.inference.ai.azure.com") ||
-		baseUrl.includes("githubcopilot.com") ||
-		baseUrl.includes("copilot-api.")
+		isDefaultOpenAIBaseUrl(baseUrl) ||
+		lowerBaseUrl.includes(".openai.azure.com") ||
+		lowerBaseUrl.includes("azure.com/openai") ||
+		lowerBaseUrl.includes("models.inference.ai.azure.com") ||
+		lowerBaseUrl.includes("githubcopilot.com") ||
+		lowerBaseUrl.includes("copilot-api.")
 	);
 }
 
