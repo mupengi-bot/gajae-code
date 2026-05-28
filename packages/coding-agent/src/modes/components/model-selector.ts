@@ -2,16 +2,19 @@ import { ThinkingLevel } from "@gajae-code/agent-core";
 import { type Model, modelsAreEqual } from "@gajae-code/ai";
 import { getOAuthProviders } from "@gajae-code/ai/utils/oauth";
 import {
+	type Component,
 	Container,
 	fuzzyFilter,
 	getKeybindings,
 	Input,
 	matchesKey,
+	padding,
 	Spacer,
 	type Tab,
 	TabBar,
 	Text,
 	type TUI,
+	visibleWidth,
 } from "@gajae-code/tui";
 import type { GjcModelAssignmentTargetId, ModelRegistry } from "../../config/model-registry";
 import { GJC_MODEL_ASSIGNMENT_TARGET_IDS, GJC_MODEL_ASSIGNMENT_TARGETS } from "../../config/model-registry";
@@ -86,6 +89,29 @@ interface CanonicalModelItem {
 	compactSearchText: string;
 	thinkingLevel?: ThinkingLevel;
 	availability: ModelAvailability;
+}
+
+class SearchInputBox implements Component {
+	constructor(private readonly input: Input) {}
+
+	invalidate(): void {
+		this.input.invalidate();
+	}
+
+	render(width: number): string[] {
+		const frameWidth = Math.max(8, width - 4);
+		const inputLine = this.input.render(frameWidth)[0] ?? "";
+		const inputLineWidth = visibleWidth(inputLine);
+		const paddedInputLine = `${inputLine}${padding(Math.max(0, frameWidth - inputLineWidth))}`;
+		const border = "─".repeat(frameWidth);
+
+		return [
+			theme.fg("muted", "  🔎 Search models"),
+			theme.fg("borderMuted", `  ┌${border}┐`),
+			`${theme.fg("borderMuted", "  │")}${paddedInputLine}${theme.fg("borderMuted", "│")}`,
+			theme.fg("borderMuted", `  └${border}┘`),
+		];
+	}
 }
 
 interface ScopedModelItem {
@@ -219,7 +245,7 @@ export class ModelSelectorComponent extends Container {
 				this.#beginActionMenuOrSelect(selectedItem);
 			}
 		};
-		this.addChild(this.#searchInput);
+		this.addChild(new SearchInputBox(this.#searchInput));
 
 		this.addChild(new Spacer(1));
 
