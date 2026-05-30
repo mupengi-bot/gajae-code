@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import SessionCommand from "../src/commands/session";
 
-type SpawnSyncMock = { mockImplementation: (implementation: (cmd: string[]) => unknown) => void; mockRestore?: () => void };
+type SpawnSyncMock = {
+	mockImplementation: (implementation: (cmd: string[]) => unknown) => void;
+	mockRestore?: () => void;
+};
 
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
 
@@ -46,7 +49,9 @@ afterEach(() => {
 
 describe("gjc session command", () => {
 	it("emits exact list JSON DTOs with flags before action", async () => {
-		mockSpawnSync(() => spawnResult(0, `${sessionLine("gajae_code_test", "feature/demo")}untagged\t1\t0\t1770000001\t\troot\t1\t\t\n`));
+		mockSpawnSync(() =>
+			spawnResult(0, `${sessionLine("gajae_code_test", "feature/demo")}untagged\t1\t0\t1770000001\t\troot\t1\t\t\n`),
+		);
 
 		const output = await runSessionCommand(["--json", "list"]);
 		const payload = JSON.parse(output);

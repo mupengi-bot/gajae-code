@@ -26,7 +26,7 @@ describe("GJC tmux session management", () => {
 			spawnResult(
 				0,
 				[
-					"gajae_code_abc\t1\t0\t1770000000\t1\troot\t2\tfeature/demo\tfeature-demo",
+					"gajae_code_abc\t1\t0\t1770000000\t1\troot\t2\tfeature/demo\tfeature-demo\t/repo-a",
 					"unrelated\t2\t1\t1770000060\t\troot\t3\t\t",
 					"gajae_code\t1\t1\t1770000120\t\troot\t1\t\t",
 				].join("\n"),
@@ -41,12 +41,13 @@ describe("GJC tmux session management", () => {
 		expect(sessions[0].bindings).toBe("root");
 		expect(sessions[0].createdAt).toBe("2026-02-02T02:40:00.000Z");
 		expect(sessions[0].branch).toBe("feature/demo");
+		expect(sessions[0].project).toBe("/repo-a");
 		expect(Bun.spawnSync).toHaveBeenCalledWith(
 			[
 				"tmux-test",
 				"list-sessions",
 				"-F",
-				"#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@gjc-profile}\t#{session_key_table}\t#{session_panes}\t#{@gjc-branch}\t#{@gjc-branch-slug}",
+				"#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@gjc-profile}\t#{session_key_table}\t#{session_panes}\t#{@gjc-branch}\t#{@gjc-branch-slug}\t#{@gjc-project}",
 			],
 			expect.any(Object),
 		);

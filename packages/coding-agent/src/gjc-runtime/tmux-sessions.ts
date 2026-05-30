@@ -5,6 +5,7 @@ import {
 	GJC_TMUX_BRANCH_SLUG_OPTION,
 	GJC_TMUX_PROFILE_OPTION,
 	GJC_TMUX_PROFILE_VALUE,
+	GJC_TMUX_PROJECT_OPTION,
 	normalizeTmuxCreatedAt,
 	resolveGjcTmuxCommand,
 } from "./tmux-common";
@@ -18,9 +19,8 @@ export interface GjcTmuxSessionStatus {
 	createdAt: string;
 	branch?: string;
 	branchSlug?: string;
+	project?: string;
 }
-
-
 
 function runTmux(args: string[], env: NodeJS.ProcessEnv = process.env): string {
 	const tmuxCommand = resolveGjcTmuxCommand(env);
@@ -47,7 +47,18 @@ function parseNumber(value: string | undefined): number {
 }
 
 function parseSessionLine(line: string): GjcTmuxSessionStatus | null {
-	const [name = "", windows = "0", attached = "0", created = "", profile = "", bindings = "", panes = "0", branch = "", branchSlug = ""] = line.split("\t");
+	const [
+		name = "",
+		windows = "0",
+		attached = "0",
+		created = "",
+		profile = "",
+		bindings = "",
+		panes = "0",
+		branch = "",
+		branchSlug = "",
+		project = "",
+	] = line.split("\t");
 	if (!name || profile !== GJC_TMUX_PROFILE_VALUE) return null;
 	return {
 		name,
@@ -58,6 +69,7 @@ function parseSessionLine(line: string): GjcTmuxSessionStatus | null {
 		createdAt: normalizeTmuxCreatedAt(created),
 		branch: branch || undefined,
 		branchSlug: branchSlug || undefined,
+		project: project || undefined,
 	};
 }
 
@@ -68,7 +80,7 @@ function listSessionLines(env: NodeJS.ProcessEnv = process.env): string[] {
 			[
 				"list-sessions",
 				"-F",
-				`#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{${GJC_TMUX_PROFILE_OPTION}}\t#{session_key_table}\t#{session_panes}\t#{${GJC_TMUX_BRANCH_OPTION}}\t#{${GJC_TMUX_BRANCH_SLUG_OPTION}}`,
+				`#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{${GJC_TMUX_PROFILE_OPTION}}\t#{session_key_table}\t#{session_panes}\t#{${GJC_TMUX_BRANCH_OPTION}}\t#{${GJC_TMUX_BRANCH_SLUG_OPTION}}\t#{${GJC_TMUX_PROJECT_OPTION}}`,
 			],
 			env,
 		);
@@ -77,7 +89,10 @@ function listSessionLines(env: NodeJS.ProcessEnv = process.env): string[] {
 		if (message.includes("no server running") || message.includes("failed to connect to server")) return [];
 		throw error;
 	}
-	return output.split("\n").map(line => line.trim()).filter(Boolean);
+	return output
+		.split("\n")
+		.map(line => line.trim())
+		.filter(Boolean);
 }
 
 export function listGjcTmuxSessions(env: NodeJS.ProcessEnv = process.env): GjcTmuxSessionStatus[] {
@@ -87,8 +102,14 @@ export function listGjcTmuxSessions(env: NodeJS.ProcessEnv = process.env): GjcTm
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function findGjcTmuxSessionByBranch(branch: string, env: NodeJS.ProcessEnv = process.env): GjcTmuxSessionStatus | undefined {
-	return listGjcTmuxSessions(env).find(session => session.branch === branch);
+export function findGjcTmuxSessionByBranch(
+	branch: string,
+	env: NodeJS.ProcessEnv = process.env,
+	project?: string | null,
+): GjcTmuxSessionStatus | undefined {
+	return listGjcTmuxSessions(env).find(
+		session => session.branch === branch && (!project || session.project === project),
+	);
 }
 
 export function statusGjcTmuxSession(sessionName: string, env: NodeJS.ProcessEnv = process.env): GjcTmuxSessionStatus {

@@ -88,6 +88,27 @@ describe("default GJC tmux launch", () => {
 		expect(calls.at(-1)?.args).toEqual(["attach-session", "-t", "=gajae_code_feature"]);
 	});
 
+	it("does not reuse same-branch sessions from another project", () => {
+		const plan = buildDefaultTmuxLaunchPlan({
+			parsed: args({ messages: ["hello world"], tmux: true }),
+			rawArgs: ["--tmux", "hello world"],
+			cwd: "/repo-b/worktree",
+			env: {},
+			argv: ["bun", "packages/coding-agent/src/cli.ts"],
+			execPath: "/bin/bun",
+			platform: "darwin",
+			tty: interactiveTty,
+			tmuxAvailable: true,
+			worktreeBranch: "feature/demo",
+			project: "/repo-b",
+			existingBranchSessionName: null,
+		});
+
+		expect(plan?.attachSessionName).toBeUndefined();
+		expect(plan?.branch).toBe("feature/demo");
+		expect(plan?.project).toBe("/repo-b");
+	});
+
 	it("honors an explicit GJC_TMUX_SESSION override", () => {
 		const plan = buildDefaultTmuxLaunchPlan({
 			parsed: args({ messages: ["hello world"], tmux: true }),
@@ -120,9 +141,9 @@ describe("default GJC tmux launch", () => {
 			"fg=colour231,bg=colour60",
 		]);
 		expect(args.flat()).not.toContain("-g");
-		expect(buildGjcTmuxProfileCommands("gjc-session:0", { GJC_TMUX_PROFILE: "false" }).map(command => command.args)).toEqual([
-			["set-option", "-t", "gjc-session:0", "@gjc-profile", "1"],
-		]);
+		expect(
+			buildGjcTmuxProfileCommands("gjc-session:0", { GJC_TMUX_PROFILE: "false" }).map(command => command.args),
+		).toEqual([["set-option", "-t", "gjc-session:0", "@gjc-profile", "1"]]);
 		expect(
 			buildGjcTmuxProfileCommands("gjc-session:0", { GJC_MOUSE: "off" }).flatMap(command => command.args),
 		).not.toContain("mouse");
@@ -195,6 +216,30 @@ describe("default GJC tmux launch", () => {
 		expect(handled).toBe(false);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].args[0]).toBe("new-session");
+	});
+
+	it("kills a detached session when required profile tagging fails", () => {
+		const calls: { command: string; args: string[]; options: TmuxSpawnOptions }[] = [];
+		const handled = launchDefaultTmuxIfNeeded({
+			parsed: args({ tmux: true }),
+			rawArgs: [],
+			cwd: "/repo",
+			env: {},
+			argv: ["/usr/local/bin/gjc"],
+			execPath: "/bin/bun",
+			platform: "darwin",
+			tty: interactiveTty,
+			tmuxAvailable: true,
+			spawnSync: (command, spawnArgs, options) => {
+				calls.push({ command, args: spawnArgs, options });
+				if (spawnArgs.includes("@gjc-profile")) return { exitCode: 1 };
+				return { exitCode: 0 };
+			},
+		});
+
+		expect(handled).toBe(false);
+		expect(calls.some(call => call.args[0] === "new-session")).toBe(true);
+		expect(calls.some(call => call.args[0] === "kill-session")).toBe(true);
 	});
 
 	it("falls through to direct launch when tmux is unavailable", () => {

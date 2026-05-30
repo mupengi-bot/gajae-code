@@ -7,6 +7,7 @@ export const GJC_TMUX_PROFILE_OPTION = "@gjc-profile";
 export const GJC_TMUX_PROFILE_VALUE = "1";
 export const GJC_TMUX_BRANCH_OPTION = "@gjc-branch";
 export const GJC_TMUX_BRANCH_SLUG_OPTION = "@gjc-branch-slug";
+export const GJC_TMUX_PROJECT_OPTION = "@gjc-project";
 
 export interface GjcTmuxProfileCommand {
 	description: string;
@@ -63,22 +64,36 @@ export function buildGjcTmuxSessionName(
 
 export function buildGjcTmuxRequiredProfileCommands(
 	target: string,
-	metadata: { branch?: string | null; branchSlug?: string | null } = {},
+	metadata: { branch?: string | null; branchSlug?: string | null; project?: string | null } = {},
 ): GjcTmuxProfileCommand[] {
 	const commands: GjcTmuxProfileCommand[] = [
-		{ description: "mark GJC tmux ownership", args: ["set-option", "-t", target, GJC_TMUX_PROFILE_OPTION, GJC_TMUX_PROFILE_VALUE] },
+		{
+			description: "mark GJC tmux ownership",
+			args: ["set-option", "-t", target, GJC_TMUX_PROFILE_OPTION, GJC_TMUX_PROFILE_VALUE],
+		},
 	];
 	if (metadata.branch)
-		commands.push({ description: "record GJC branch identity", args: ["set-option", "-t", target, GJC_TMUX_BRANCH_OPTION, metadata.branch] });
+		commands.push({
+			description: "record GJC branch identity",
+			args: ["set-option", "-t", target, GJC_TMUX_BRANCH_OPTION, metadata.branch],
+		});
 	if (metadata.branchSlug)
-		commands.push({ description: "record GJC branch slug", args: ["set-option", "-t", target, GJC_TMUX_BRANCH_SLUG_OPTION, metadata.branchSlug] });
+		commands.push({
+			description: "record GJC branch slug",
+			args: ["set-option", "-t", target, GJC_TMUX_BRANCH_SLUG_OPTION, metadata.branchSlug],
+		});
+	if (metadata.project)
+		commands.push({
+			description: "record GJC project identity",
+			args: ["set-option", "-t", target, GJC_TMUX_PROJECT_OPTION, metadata.project],
+		});
 	return commands;
 }
 
 export function buildGjcTmuxProfileCommands(
 	target: string,
 	env: NodeJS.ProcessEnv = process.env,
-	metadata: { branch?: string | null; branchSlug?: string | null } = {},
+	metadata: { branch?: string | null; branchSlug?: string | null; project?: string | null } = {},
 ): GjcTmuxProfileCommand[] {
 	const commands = buildGjcTmuxRequiredProfileCommands(target, metadata);
 	if (envDisabled(env[GJC_TMUX_PROFILE_ENV])) return commands;
