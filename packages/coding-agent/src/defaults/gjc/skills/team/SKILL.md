@@ -218,7 +218,11 @@ Semantics:
 - `.gjc/state/team/<team>/monitor-snapshot.json`
 - `.gjc/state/team/<team>/integration-report.md`
 - `.gjc/state/team/<team>/tasks/task-1.json`
-- `.gjc/state/team/<team>/mailbox/worker-1.json`
+- `.gjc/state/team/<team>/mailbox/worker-1/<message-id>.json`
+- `.gjc/state/team/<team>/mailbox/worker-1.json` (legacy compatibility view)
+- `.gjc/state/team/<team>/notifications/<notification-id>.json`
+- `.gjc/state/team/<team>/workers/<worker>/startup-ack.json`
+- `.gjc/state/team/<team>/workers/<worker>/nudges/<fingerprint>.json`
 - `.gjc/reports/team-commit-hygiene/<team>.ledger.json`
 
 ## Team Mutation Interop (CLI-first)
@@ -236,12 +240,27 @@ Canonical worker lifecycle operations:
 - `transition-task-status`
 - `release-task-claim`
 
-GJC-team interop operations are also available for mailbox, worker heartbeat/status, events, monitor snapshots, approvals, and shutdown request/ack flows; run `gjc team api --help` for the full operation list.
+GJC-team interop operations are also available for mailbox, native notification, worker heartbeat/status, startup ACK, events, monitor snapshots, approvals, and shutdown request/ack flows; run `gjc team api --help` for the full operation list.
+
+## GJC-native concept parity
+
+GJC ports team-mode concepts from `../../oh-my-codex`, not code or OMX/Codex-specific assumptions:
+
+| Concept | GJC-native equivalent |
+|---------|-----------------------|
+| Worker identity/inbox/mailbox paths | `.gjc/state/team/<team>/workers/<worker>/identity.json`, `inbox.md`, and per-message mailbox records under `.gjc/state/team/<team>/mailbox/<worker>/`. |
+| Startup ACK | `gjc team api worker-startup-ack`, persisted as `workers/<worker>/startup-ack.json`. |
+| Claim-safe lifecycle APIs | `claim-task`, `transition-task-status`, and `release-task-claim` with worker ownership and claim-token guards. |
+| Delivery states and deferred pane attempts | Native notification records under `.gjc/state/team/<team>/notifications/` with `pending`, `sent`, `queued`, `deferred`, `failed`, `delivered`, and `acknowledged` states. |
+| Non-destructive leader nudges | Lifecycle nudge records under `workers/<worker>/nudges/`; GJC suggests inspection/relaunch but never auto-kills or auto-relaunches workers. |
+
+Forbidden assumptions: do not copy OMX paths, Codex notify payload formats, OMX process names, or source code directly. Keep tmux as the current runtime; native split-worker TUI remains roadmap-only.
 
 Worker protocol:
 
+- Send startup ACK with `worker-startup-ack` before task work.
 - Claim pending work with `claim-task`.
-- Transition the task to `completed`, `failed`, or `blocked` with `transition-task-status`.
+- Transition the task to `completed`, `failed`, or `blocked` with `transition-task-status`, including claim token and evidence for completion.
 - Commit or leave worktree changes in the worker worktree; the leader `status`/`resume` monitor path will auto-checkpoint dirty worktrees and integrate committed history where possible.
 - Record implementation/verification evidence in normal task output and state files; leader integration/conflict notifications are delivered through `.gjc/state/team/<team>/mailbox/leader-fixed.json`.
 

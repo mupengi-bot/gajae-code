@@ -720,6 +720,148 @@ describe("native gjc team runtime", () => {
 		);
 	});
 
+	it("stores mailbox messages per recipient and maintains native notification transitions", async () => {
+		cleanupRoot = await fs.mkdtemp(path.join(os.tmpdir(), "gjc-team-runtime-"));
+		await startGjcTeam({
+			workerCount: 2,
+			agentType: "executor",
+			task: "Notification contract",
+			teamName: "notification-team",
+			cwd: cleanupRoot,
+			dryRun: true,
+			env: { PATH: "" },
+		});
+
+		const first = (await executeGjcTeamApiOperation(
+			"send-message",
+			{
+				team_name: "notification-team",
+				from_worker: "worker-1",
+				to_worker: "worker-2",
+				body: "hello stable delivery",
+				idempotency_key: "stable-key",
+			},
+			cleanupRoot,
+			{ PATH: "" },
+		)) as { message: { message_id: string } };
+		const second = (await executeGjcTeamApiOperation(
+			"send-message",
+			{
+				team_name: "notification-team",
+				from_worker: "worker-1",
+				to_worker: "worker-2",
+				body: "hello stable delivery",
+				idempotency_key: "stable-key",
+			},
+			cleanupRoot,
+			{ PATH: "" },
+		)) as { message: { message_id: string } };
+		expect(second.message.message_id).toBe(first.message.message_id);
+		expect(
+			await Bun.file(
+				path.join(
+					cleanupRoot,
+					".gjc",
+					"state",
+					"team",
+					"notification-team",
+					"mailbox",
+					"worker-2",
+					`${first.message.message_id}.json`,
+				),
+			).exists(),
+		).toBe(true);
+
+		let notifications = (await executeGjcTeamApiOperation(
+			"notification-list",
+			{ team_name: "notification-team" },
+			cleanupRoot,
+			{ PATH: "" },
+		)) as {
+			notifications: Array<{ delivery_state: string; pane_attempt_result?: string }>;
+			summary: { total: number };
+		};
+		expect(notifications.summary.total).toBe(1);
+		expect(notifications.notifications[0]?.pane_attempt_result).toBe("sent");
+
+		await executeGjcTeamApiOperation(
+			"mailbox-mark-notified",
+			{ team_name: "notification-team", worker: "worker-2", message_id: first.message.message_id },
+			cleanupRoot,
+			{ PATH: "" },
+		);
+		notifications = (await executeGjcTeamApiOperation(
+			"notification-list",
+			{ team_name: "notification-team" },
+			cleanupRoot,
+			{ PATH: "" },
+		)) as { notifications: Array<{ delivery_state: string }>; summary: { total: number } };
+		expect(notifications.notifications[0]?.delivery_state).toBe("delivered");
+
+		await executeGjcTeamApiOperation(
+			"mailbox-mark-delivered",
+			{ team_name: "notification-team", worker: "worker-2", message_id: first.message.message_id },
+			cleanupRoot,
+			{ PATH: "" },
+		);
+		notifications = (await executeGjcTeamApiOperation(
+			"notification-list",
+			{ team_name: "notification-team" },
+			cleanupRoot,
+			{ PATH: "" },
+		)) as { notifications: Array<{ delivery_state: string }>; summary: { total: number } };
+		expect(notifications.notifications[0]?.delivery_state).toBe("acknowledged");
+	});
+
+	it("rejects path-like worker ids and reports lifecycle nudges without automatic worker action", async () => {
+		cleanupRoot = await fs.mkdtemp(path.join(os.tmpdir(), "gjc-team-runtime-"));
+		await startGjcTeam({
+			workerCount: 1,
+			agentType: "executor",
+			task: "Guard invalid workers",
+			teamName: "guard-team",
+			cwd: cleanupRoot,
+			dryRun: true,
+			env: { PATH: "" },
+		});
+
+		await expect(
+			executeGjcTeamApiOperation(
+				"send-message",
+				{ team_name: "guard-team", from_worker: "worker-1", to_worker: "../bad", body: "bad" },
+				cleanupRoot,
+				{ PATH: "" },
+			),
+		).rejects.toThrow(/invalid_worker_id/);
+		await expect(
+			executeGjcTeamApiOperation(
+				"update-worker-heartbeat",
+				{ team_name: "guard-team", worker: "../escaped", pid: 9, alive: true },
+				cleanupRoot,
+				{ PATH: "" },
+			),
+		).rejects.toThrow(/invalid_worker_id/);
+		expect(
+			await Bun.file(
+				path.join(cleanupRoot, ".gjc", "state", "team", "guard-team", "escaped", "heartbeat.json"),
+			).exists(),
+		).toBe(false);
+
+		const monitored = await monitorGjcTeam("guard-team", cleanupRoot, {
+			PATH: "",
+			GJC_TEAM_STARTUP_GRACE_MS: "0",
+			GJC_TEAM_HEARTBEAT_STALE_MS: "0",
+			GJC_TEAM_NUDGE_COOLDOWN_MS: "60000",
+		});
+		expect(monitored.workers[0]?.status).toBe("idle");
+		const nudgeDir = path.join(cleanupRoot, ".gjc", "state", "team", "guard-team", "workers", "worker-1", "nudges");
+		const nudges = await fs.readdir(nudgeDir);
+		expect(nudges.length).toBeGreaterThan(0);
+		const events = await readEvents(path.join(cleanupRoot, ".gjc", "state", "team", "guard-team"));
+		expect(events).toContain("worker_lifecycle_nudge");
+		expect(events).toContain("auto_action_taken");
+	});
+
 	it("monitor integrates dirty detached worker worktrees and records GJC-scoped hygiene artifacts", async () => {
 		cleanupRoot = await createGitRepo();
 		const fakeTmux = await createFakeTmuxBin(cleanupRoot);
@@ -1014,6 +1156,7 @@ describe("native gjc team runtime", () => {
 		expect(commandSource).toContain("listGjcTeams()");
 		expect(commandSource).toContain("formatTaskCounts(snapshot.task_counts)");
 		expect(commandSource).toContain("formatIntegrationSummary(snapshot)");
+		expect(commandSource).toContain("formatNotificationSummary(snapshot)");
 
 		const runtimeSource = await Bun.file(path.join(import.meta.dir, "../../src/gjc-runtime/team-runtime.ts")).text();
 		for (const disallowedGitStrategy of ['"-X"', '"--strategy-option"', "-X theirs", "-X ours"]) {

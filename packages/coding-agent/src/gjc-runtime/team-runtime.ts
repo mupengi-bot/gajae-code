@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { WorkflowHudSummary } from "../skill-state/active-state";
@@ -121,6 +121,39 @@ export interface GjcTeamMonitorSnapshot {
 	updated_at: string;
 }
 
+export type GjcTeamNotificationDeliveryState =
+	| "pending"
+	| "sent"
+	| "queued"
+	| "deferred"
+	| "failed"
+	| "delivered"
+	| "acknowledged";
+
+export type GjcTeamPaneAttemptResult = "sent" | "queued" | "deferred" | "failed";
+
+export interface GjcTeamNotification {
+	id: string;
+	kind: "mailbox_message" | "worker_lifecycle" | "invalid_attempt";
+	team_name: string;
+	recipient: string;
+	source: { type: "message" | "task" | "worker" | "event"; id: string };
+	idempotency_key?: string;
+	delivery_state: GjcTeamNotificationDeliveryState;
+	pane_attempt_result?: GjcTeamPaneAttemptResult;
+	pane_attempt_reason?: string;
+	pane_attempt_at?: string;
+	created_at: string;
+	updated_at: string;
+	replay_count: number;
+}
+
+export interface GjcTeamNotificationSummary {
+	total: number;
+	replay_eligible: number;
+	by_state: Record<GjcTeamNotificationDeliveryState, number>;
+}
+
 export interface GjcTeamSnapshot {
 	team_name: string;
 	display_name: string;
@@ -133,6 +166,7 @@ export interface GjcTeamSnapshot {
 	task_counts: Record<GjcTeamTaskStatus, number>;
 	workers: GjcTeamWorker[];
 	integration_by_worker?: Record<string, GjcTeamWorkerIntegrationState>;
+	notification_summary: GjcTeamNotificationSummary;
 	updated_at: string;
 }
 
@@ -163,6 +197,7 @@ export interface GjcTeamMailboxMessage {
 	created_at: string;
 	delivered_at?: string;
 	notified_at?: string;
+	idempotency_key?: string;
 }
 
 interface FsError {
@@ -319,6 +354,11 @@ export const GJC_TEAM_API_OPERATIONS = [
 	"mailbox-list",
 	"mailbox-mark-delivered",
 	"mailbox-mark-notified",
+	"notification-list",
+	"notification-read",
+	"notification-replay",
+	"notification-mark-pane-attempt",
+	"worker-startup-ack",
 	"create-task",
 	"read-task",
 	"list-tasks",
@@ -367,6 +407,10 @@ function sanitizeName(value: string): string {
 function shortHash(value: string): string {
 	return Bun.hash(value).toString(16).slice(0, 8).padStart(8, "0");
 }
+
+function stableHash(value: string): string {
+	return createHash("sha256").update(value).digest("hex").slice(0, 24);
+}
 function makeTeamName(task: string, env: NodeJS.ProcessEnv): string {
 	const basis = [task, env.GJC_SESSION_ID, env.CODEX_SESSION_ID, env.TMUX_PANE, env.TMUX, now()]
 		.filter(Boolean)
@@ -380,14 +424,62 @@ function teamDir(stateRoot: string, teamName: string): string {
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, "'\\''")}'`;
 }
+function safePathSegment(kind: string, value: string): string {
+	assertSafeId(kind, value);
+	return value;
+}
 function taskPath(dir: string, taskId: string): string {
-	return path.join(dir, "tasks", `${taskId}.json`);
+	return path.join(dir, "tasks", `${safePathSegment("task_id", taskId)}.json`);
 }
 function mailboxPath(dir: string, worker: string): string {
-	return path.join(dir, "mailbox", `${worker}.json`);
+	return path.join(dir, "mailbox", `${safePathSegment("worker_id", worker)}.json`);
+}
+function mailboxDirPath(dir: string, worker: string): string {
+	return path.join(dir, "mailbox", safePathSegment("worker_id", worker));
+}
+function mailboxMessagePath(dir: string, worker: string, messageId: string): string {
+	return path.join(mailboxDirPath(dir, worker), `${safePathSegment("message_id", messageId)}.json`);
+}
+function notificationPath(dir: string, notificationId: string): string {
+	return path.join(dir, "notifications", `${safePathSegment("notification_id", notificationId)}.json`);
 }
 function workerDir(dir: string, worker: string): string {
-	return path.join(dir, "workers", worker);
+	return path.join(dir, "workers", safePathSegment("worker_id", worker));
+}
+function isSafeId(value: string): boolean {
+	return (
+		/^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$/.test(value) &&
+		!value.includes("..") &&
+		!value.includes("/") &&
+		!value.includes("\\")
+	);
+}
+function assertSafeId(kind: string, value: string): void {
+	if (!isSafeId(value)) throw new Error(`invalid_${kind}:${value}`);
+}
+function isLeaderRecipient(value: string): boolean {
+	return value === "leader-fixed";
+}
+function assertKnownWorker(config: GjcTeamConfig, worker: string, allowLeader = false): void {
+	assertSafeId("worker_id", worker);
+	if (allowLeader && isLeaderRecipient(worker)) return;
+	if (!config.workers.some(candidate => candidate.id === worker)) throw new Error(`unknown_worker:${worker}`);
+}
+function assertKnownParticipant(config: GjcTeamConfig, worker: string): void {
+	assertKnownWorker(config, worker, true);
+}
+function messageNotificationId(teamName: string, recipient: string, messageId: string): string {
+	return `ntf-${stableHash(["mailbox_message", teamName, recipient, messageId].join(":"))}`;
+}
+function messageIdFor(input: {
+	teamName: string;
+	fromWorker: string;
+	toWorker: string;
+	body: string;
+	idempotencyKey?: string;
+	createdKey: string;
+}): string {
+	return `msg-${stableHash([input.teamName, input.fromWorker, input.toWorker, input.idempotencyKey ?? input.body, input.createdKey].join(":"))}`;
 }
 function workerIntegrationDedupePath(dir: string, worker: string): string {
 	return path.join(workerDir(dir, worker), "posttooluse-dedupe.json");
@@ -409,7 +501,23 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
 }
 async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
 	await fs.mkdir(path.dirname(filePath), { recursive: true });
-	await Bun.write(filePath, `${JSON.stringify(value, null, 2)}\n`);
+	const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
+	await Bun.write(tmpPath, `${JSON.stringify(value, null, 2)}\n`);
+	await fs.rename(tmpPath, filePath);
+}
+async function writeJsonFileNoClobber(filePath: string, value: unknown): Promise<boolean> {
+	await fs.mkdir(path.dirname(filePath), { recursive: true });
+	let handle: fs.FileHandle | undefined;
+	try {
+		handle = await fs.open(filePath, "wx");
+		await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf-8");
+		return true;
+	} catch (error) {
+		if (isEexist(error)) return false;
+		throw error;
+	} finally {
+		await handle?.close();
+	}
 }
 async function appendJsonl(filePath: string, value: unknown): Promise<void> {
 	await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -1409,10 +1517,11 @@ async function integrateGjcWorkerCommits(
 }
 
 async function initializeStateDirs(dir: string, workers: GjcTeamWorker[]): Promise<void> {
-	for (const folder of ["tasks", "claims", "mailbox", "dispatch", "approvals", "workers"])
+	for (const folder of ["tasks", "claims", "mailbox", "notifications", "dispatch", "approvals", "workers"])
 		await fs.mkdir(path.join(dir, folder), { recursive: true });
 	for (const worker of workers) {
 		await fs.mkdir(workerDir(dir, worker.id), { recursive: true });
+		await fs.mkdir(mailboxDirPath(dir, worker.id), { recursive: true });
 		await writeJsonFile(mailboxPath(dir, worker.id), { messages: [] });
 		await writeJsonFile(path.join(workerDir(dir, worker.id), "status.json"), { state: "idle", updated_at: now() });
 		await writeJsonFile(path.join(workerDir(dir, worker.id), "heartbeat.json"), {
@@ -1422,6 +1531,7 @@ async function initializeStateDirs(dir: string, workers: GjcTeamWorker[]): Promi
 			alive: true,
 		});
 	}
+	await fs.mkdir(mailboxDirPath(dir, "leader-fixed"), { recursive: true });
 	await writeJsonFile(mailboxPath(dir, "leader-fixed"), { messages: [] });
 }
 
@@ -1550,6 +1660,7 @@ export async function readGjcTeamSnapshot(
 	};
 	for (const task of tasks) taskCounts[task.status] += 1;
 	const monitor = await readJsonFile<GjcTeamMonitorSnapshot>(monitorSnapshotPath(dir));
+	const notificationSummary = await reconcileTeamNotifications(dir, config);
 	return {
 		team_name: config.team_name,
 		display_name: config.display_name,
@@ -1562,6 +1673,7 @@ export async function readGjcTeamSnapshot(
 		task_counts: taskCounts,
 		workers: config.workers,
 		integration_by_worker: monitor?.integration_by_worker,
+		notification_summary: notificationSummary,
 		updated_at: config.updated_at,
 	};
 }
@@ -1677,6 +1789,8 @@ export async function monitorGjcTeam(
 	const previous = await readJsonFile<GjcTeamMonitorSnapshot>(monitorSnapshotPath(dir));
 	const integrationByWorker = await integrateGjcWorkerCommits(config, dir, previous, cwd, env);
 	await writeJsonFile(monitorSnapshotPath(dir), { integration_by_worker: integrationByWorker, updated_at: now() });
+	await replayGjcTeamNotifications(teamName, cwd, env);
+	await computeLifecycleNudges(config, dir, cwd, env);
 	return readGjcTeamSnapshot(teamName, cwd, env);
 }
 export async function listGjcTeams(
@@ -1697,6 +1811,136 @@ export async function listGjcTeams(
 		throw error;
 	}
 }
+
+function parsePaneAttemptResult(value: string): GjcTeamPaneAttemptResult {
+	if (value === "sent" || value === "queued" || value === "deferred" || value === "failed") return value;
+	throw new Error(`invalid_pane_attempt_result:${value}`);
+}
+async function writeGjcWorkerStartupAck(
+	teamName: string,
+	worker: string,
+	cwd: string,
+	env: NodeJS.ProcessEnv,
+	input: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
+	assertKnownWorker(config, worker);
+	const ack = {
+		worker,
+		pid: typeof input.pid === "number" ? input.pid : undefined,
+		session: typeof input.session === "string" ? input.session : undefined,
+		protocol_version: String(input.protocol_version ?? "1"),
+		ack_at: now(),
+	};
+	await writeJsonFile(path.join(workerDir(dir, worker), "startup-ack.json"), ack);
+	await appendEvent(dir, { type: "worker_startup_ack", worker, message: `Worker ${worker} acknowledged startup` });
+	return ack;
+}
+function parseDurationEnv(env: NodeJS.ProcessEnv, name: string, fallbackMs: number): number {
+	const raw = env[name]?.trim();
+	if (!raw) return fallbackMs;
+	const parsed = Number(raw);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallbackMs;
+}
+async function writeLifecycleNudge(
+	dir: string,
+	worker: string,
+	condition: string,
+	severity: "warning" | "error",
+	suggestedAction: string,
+	env: NodeJS.ProcessEnv,
+): Promise<void> {
+	const fingerprint = `nudge-${stableHash([worker, condition].join(":"))}`;
+	const nudgePath = path.join(workerDir(dir, worker), "nudges", `${fingerprint}.json`);
+	const existing = await readJsonFile<Record<string, unknown>>(nudgePath);
+	const nowMs = Date.now();
+	const cooldownMs = parseDurationEnv(env, "GJC_TEAM_NUDGE_COOLDOWN_MS", 30_000);
+	const cooldownUntil = typeof existing?.cooldown_until === "string" ? Date.parse(existing.cooldown_until) : 0;
+	if (existing && Number.isFinite(cooldownUntil) && cooldownUntil > nowMs) return;
+	const firstSeen = typeof existing?.first_seen_at === "string" ? existing.first_seen_at : now();
+	const count = typeof existing?.count === "number" ? existing.count + 1 : 1;
+	const record = {
+		fingerprint,
+		worker,
+		condition,
+		severity,
+		first_seen_at: firstSeen,
+		last_seen_at: now(),
+		cooldown_until: new Date(nowMs + cooldownMs).toISOString(),
+		count,
+		suggested_action: suggestedAction,
+		auto_action_taken: false,
+	};
+	await writeJsonFile(nudgePath, record);
+	await appendEvent(dir, {
+		type: "worker_lifecycle_nudge",
+		worker,
+		message: suggestedAction,
+		data: { condition, severity, fingerprint, auto_action_taken: false },
+	});
+	await writeNotificationRecord(dir, {
+		id: `ntf-${stableHash(["worker_lifecycle", worker, condition].join(":"))}`,
+		kind: "worker_lifecycle",
+		team_name: path.basename(dir),
+		recipient: "leader-fixed",
+		source: { type: "worker", id: worker },
+		delivery_state: "pending",
+		created_at: firstSeen,
+		updated_at: now(),
+		replay_count: 0,
+	});
+}
+async function computeLifecycleNudges(
+	config: GjcTeamConfig,
+	dir: string,
+	_cwd: string,
+	env: NodeJS.ProcessEnv,
+): Promise<void> {
+	const startupGraceMs = parseDurationEnv(env, "GJC_TEAM_STARTUP_GRACE_MS", 30_000);
+	const heartbeatStaleMs = parseDurationEnv(env, "GJC_TEAM_HEARTBEAT_STALE_MS", 120_000);
+	const createdAt = Date.parse(config.created_at);
+	const ageMs = Date.now() - (Number.isFinite(createdAt) ? createdAt : Date.now());
+	for (const worker of config.workers) {
+		const ack = await readJsonFile<Record<string, unknown>>(path.join(workerDir(dir, worker.id), "startup-ack.json"));
+		if (!ack && ageMs >= startupGraceMs) {
+			await writeLifecycleNudge(
+				dir,
+				worker.id,
+				"missing_startup_ack",
+				"warning",
+				`Worker ${worker.id} has not sent startup ACK; leader may inspect or relaunch manually.`,
+				env,
+			);
+		}
+		const heartbeat = await readGjcWorkerHeartbeat(config.team_name, worker.id, config.leader.cwd, {
+			...env,
+			GJC_TEAM_STATE_ROOT: config.state_root,
+		});
+		const heartbeatAt = Date.parse(heartbeat?.last_turn_at ?? worker.last_heartbeat);
+		if (Number.isFinite(heartbeatAt) && Date.now() - heartbeatAt >= heartbeatStaleMs) {
+			await writeLifecycleNudge(
+				dir,
+				worker.id,
+				"stale_heartbeat",
+				"warning",
+				`Worker ${worker.id} heartbeat is stale; leader may inspect or relaunch manually.`,
+				env,
+			);
+		}
+		if (worker.status === "stopped") {
+			await writeLifecycleNudge(
+				dir,
+				worker.id,
+				"worker_stopped",
+				"error",
+				`Worker ${worker.id} is stopped before team completion; leader action is required.`,
+				env,
+			);
+		}
+	}
+}
+
 export async function shutdownGjcTeam(
 	teamName: string,
 	cwd = process.cwd(),
@@ -1809,6 +2053,8 @@ export async function claimGjcTeamTask(
 	taskId?: string,
 ): Promise<GjcTeamApiClaimResult> {
 	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
+	assertKnownWorker(config, workerId);
 	const tasks = await readTasks(dir);
 	const task = taskId
 		? tasks.find(candidate => candidate.id === taskId)
@@ -1868,15 +2114,22 @@ export async function transitionGjcTeamTaskStatus(
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
 	claimToken?: string,
+	workerId?: string,
+	evidence?: string,
 ): Promise<GjcTeamTask> {
 	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
 	const task = await readGjcTeamTask(teamName, taskId, cwd, env);
+	if (workerId) assertKnownWorker(config, workerId);
 	if (status === "pending") throw new Error(`invalid_task_transition:${taskId}:pending_requires_release`);
 	if (task.status === "completed" || task.status === "failed") throw new Error(`task_terminal:${taskId}`);
 	if (!task.claim) throw new Error(`claim_token_required:${taskId}`);
 	if (!claimToken) throw new Error(`claim_token_required:${taskId}`);
 	if (task.claim.token !== claimToken) throw new Error(`claim_token_mismatch:${taskId}`);
+	if (workerId && task.claim.owner !== workerId) throw new Error(`claim_owner_mismatch:${taskId}`);
 	const terminal = status === "completed" || status === "failed";
+	if (status === "completed" && evidence !== undefined && evidence.trim().length === 0)
+		throw new Error(`task_evidence_required:${taskId}`);
 	const updated: GjcTeamTask = {
 		...task,
 		status,
@@ -1886,6 +2139,13 @@ export async function transitionGjcTeamTaskStatus(
 		...(terminal ? { completed_at: now() } : {}),
 	};
 	await writeTask(dir, updated);
+	if (terminal && evidence)
+		await writeJsonFile(path.join(dir, "tasks", `${taskId}.evidence.json`), {
+			task_id: taskId,
+			worker: workerId ?? task.claim.owner,
+			evidence,
+			recorded_at: now(),
+		});
 	if (terminal) await fs.rm(path.join(dir, "claims", `${taskId}.json`), { force: true });
 	await appendEvent(dir, {
 		type: "task_transitioned",
@@ -1936,15 +2196,227 @@ export async function releaseGjcTeamTaskClaim(
 	return updated;
 }
 
-async function readMailbox(dir: string, worker: string): Promise<{ messages: GjcTeamMailboxMessage[] }> {
+function emptyNotificationSummary(): GjcTeamNotificationSummary {
+	return {
+		total: 0,
+		replay_eligible: 0,
+		by_state: {
+			pending: 0,
+			sent: 0,
+			queued: 0,
+			deferred: 0,
+			failed: 0,
+			delivered: 0,
+			acknowledged: 0,
+		},
+	};
+}
+function isReplayEligibleNotification(state: GjcTeamNotificationDeliveryState): boolean {
+	return state === "pending" || state === "queued" || state === "deferred" || state === "failed";
+}
+function summarizeNotifications(notifications: GjcTeamNotification[]): GjcTeamNotificationSummary {
+	const summary = emptyNotificationSummary();
+	for (const notification of notifications) {
+		summary.total += 1;
+		summary.by_state[notification.delivery_state] += 1;
+		if (isReplayEligibleNotification(notification.delivery_state)) summary.replay_eligible += 1;
+	}
+	return summary;
+}
+async function listNotificationRecords(dir: string): Promise<GjcTeamNotification[]> {
+	const notificationsDir = path.join(dir, "notifications");
+	try {
+		const entries = await fs.readdir(notificationsDir, { withFileTypes: true });
+		const records = await Promise.all(
+			entries
+				.filter(entry => entry.isFile() && entry.name.endsWith(".json"))
+				.map(entry => readJsonFile<GjcTeamNotification>(path.join(notificationsDir, entry.name))),
+		);
+		return records
+			.filter((record): record is GjcTeamNotification => record != null)
+			.sort((a, b) => a.id.localeCompare(b.id));
+	} catch (error) {
+		if (isEnoent(error)) return [];
+		throw error;
+	}
+}
+async function readNotificationRecord(dir: string, notificationId: string): Promise<GjcTeamNotification> {
+	assertSafeId("notification_id", notificationId);
+	const notification = await readJsonFile<GjcTeamNotification>(notificationPath(dir, notificationId));
+	if (!notification) throw new Error(`notification_not_found:${notificationId}`);
+	return notification;
+}
+function mergeNotificationState(
+	current: GjcTeamNotificationDeliveryState,
+	next: GjcTeamNotificationDeliveryState,
+): GjcTeamNotificationDeliveryState {
+	const rank: Record<GjcTeamNotificationDeliveryState, number> = {
+		pending: 0,
+		queued: 1,
+		deferred: 1,
+		failed: 1,
+		sent: 2,
+		delivered: 3,
+		acknowledged: 4,
+	};
+	return rank[next] >= rank[current] ? next : current;
+}
+async function writeNotificationRecord(dir: string, notification: GjcTeamNotification): Promise<GjcTeamNotification> {
+	const existing = await readJsonFile<GjcTeamNotification>(notificationPath(dir, notification.id));
+	const merged: GjcTeamNotification = existing
+		? {
+				...existing,
+				...notification,
+				delivery_state: mergeNotificationState(existing.delivery_state, notification.delivery_state),
+				created_at: existing.created_at,
+				replay_count: Math.max(existing.replay_count ?? 0, notification.replay_count ?? 0),
+				updated_at: now(),
+			}
+		: notification;
+	await writeJsonFile(notificationPath(dir, merged.id), merged);
+	return merged;
+}
+async function createMessageNotification(
+	dir: string,
+	teamName: string,
+	message: GjcTeamMailboxMessage,
+	state: GjcTeamNotificationDeliveryState = "pending",
+): Promise<GjcTeamNotification> {
+	const id = messageNotificationId(teamName, message.to_worker, message.message_id);
+	return writeNotificationRecord(dir, {
+		id,
+		kind: "mailbox_message",
+		team_name: teamName,
+		recipient: message.to_worker,
+		source: { type: "message", id: message.message_id },
+		idempotency_key: message.idempotency_key,
+		delivery_state: state,
+		created_at: message.created_at,
+		updated_at: now(),
+		replay_count: 0,
+	});
+}
+async function readLegacyMailbox(dir: string, worker: string): Promise<{ messages: GjcTeamMailboxMessage[] }> {
 	return (await readJsonFile<{ messages: GjcTeamMailboxMessage[] }>(mailboxPath(dir, worker))) ?? { messages: [] };
 }
-async function writeMailbox(
+async function readMailbox(dir: string, worker: string): Promise<{ messages: GjcTeamMailboxMessage[] }> {
+	assertSafeId("worker_id", worker);
+	const byId = new Map<string, GjcTeamMailboxMessage>();
+	for (const message of (await readLegacyMailbox(dir, worker)).messages ?? []) byId.set(message.message_id, message);
+	try {
+		const entries = await fs.readdir(mailboxDirPath(dir, worker), { withFileTypes: true });
+		const records = await Promise.all(
+			entries
+				.filter(entry => entry.isFile() && entry.name.endsWith(".json"))
+				.map(entry => readJsonFile<GjcTeamMailboxMessage>(path.join(mailboxDirPath(dir, worker), entry.name))),
+		);
+		for (const message of records) if (message) byId.set(message.message_id, message);
+	} catch (error) {
+		if (!isEnoent(error)) throw error;
+	}
+	return { messages: [...byId.values()].sort((a, b) => a.created_at.localeCompare(b.created_at)) };
+}
+async function writeLegacyMailboxView(dir: string, worker: string): Promise<void> {
+	const current = await readMailbox(dir, worker);
+	await writeJsonFile(mailboxPath(dir, worker), current);
+}
+async function writeMailboxMessage(
 	dir: string,
 	worker: string,
-	mailbox: { messages: GjcTeamMailboxMessage[] },
-): Promise<void> {
-	await writeJsonFile(mailboxPath(dir, worker), mailbox);
+	message: GjcTeamMailboxMessage,
+): Promise<GjcTeamMailboxMessage> {
+	assertSafeId("message_id", message.message_id);
+	const filePath = mailboxMessagePath(dir, worker, message.message_id);
+	const existing = await readJsonFile<GjcTeamMailboxMessage>(filePath);
+	if (existing) {
+		if (
+			existing.from_worker !== message.from_worker ||
+			existing.to_worker !== message.to_worker ||
+			existing.body !== message.body
+		) {
+			throw new Error(`message_id_conflict:${message.message_id}`);
+		}
+		const merged = {
+			...existing,
+			...message,
+			notified_at: existing.notified_at ?? message.notified_at,
+			delivered_at: existing.delivered_at ?? message.delivered_at,
+		};
+		await writeJsonFile(filePath, merged);
+		await writeLegacyMailboxView(dir, worker);
+		return merged;
+	}
+	const created = await writeJsonFileNoClobber(filePath, message);
+	if (!created) return writeMailboxMessage(dir, worker, message);
+	await writeLegacyMailboxView(dir, worker);
+	return message;
+}
+async function reconcileTeamNotifications(dir: string, config: GjcTeamConfig): Promise<GjcTeamNotificationSummary> {
+	for (const recipient of ["leader-fixed", ...config.workers.map(worker => worker.id)]) {
+		const mailbox = await readMailbox(dir, recipient);
+		for (const message of mailbox.messages) {
+			const state = message.delivered_at ? "acknowledged" : message.notified_at ? "delivered" : "pending";
+			await createMessageNotification(dir, config.team_name, message, state);
+		}
+	}
+	return summarizeNotifications(await listNotificationRecords(dir));
+}
+async function attemptPaneNotification(
+	dir: string,
+	config: GjcTeamConfig,
+	notification: GjcTeamNotification,
+	env: NodeJS.ProcessEnv,
+): Promise<GjcTeamNotification> {
+	const paneId =
+		notification.recipient === "leader-fixed"
+			? config.leader.pane_id
+			: config.workers.find(worker => worker.id === notification.recipient)?.pane_id;
+	let result: GjcTeamPaneAttemptResult = "deferred";
+	let reason = "pane_missing";
+	if (paneId) {
+		if (config.tmux_session === "dry-run" || env.GJC_TEAM_FAKE_PANE_ATTEMPT === "sent") {
+			result = "sent";
+			reason = "dry_run_or_fake_tmux";
+		} else {
+			result = "queued";
+			reason = "tmux_delivery_recorded_without_injection";
+		}
+	}
+	return writeNotificationRecord(dir, {
+		...notification,
+		delivery_state: result,
+		pane_attempt_result: result,
+		pane_attempt_reason: reason,
+		pane_attempt_at: now(),
+		updated_at: now(),
+	});
+}
+export async function replayGjcTeamNotifications(
+	teamName: string,
+	cwd = process.cwd(),
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<{ notifications: GjcTeamNotification[]; summary: GjcTeamNotificationSummary }> {
+	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
+	await reconcileTeamNotifications(dir, config);
+	const next: GjcTeamNotification[] = [];
+	for (const notification of await listNotificationRecords(dir)) {
+		if (!isReplayEligibleNotification(notification.delivery_state)) {
+			next.push(notification);
+			continue;
+		}
+		const attempted = await attemptPaneNotification(
+			dir,
+			config,
+			{
+				...notification,
+				replay_count: (notification.replay_count ?? 0) + 1,
+			},
+			env,
+		);
+		next.push(attempted);
+	}
+	return { notifications: next, summary: summarizeNotifications(next) };
 }
 export async function sendGjcTeamMessage(
 	teamName: string,
@@ -1953,20 +2425,31 @@ export async function sendGjcTeamMessage(
 	body: string,
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
+	idempotencyKey?: string,
 ): Promise<GjcTeamMailboxMessage> {
 	const dir = await findTeamDir(teamName, cwd, env);
-	const message = {
-		message_id: `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+	const config = await readConfig(dir);
+	assertKnownParticipant(config, fromWorker);
+	assertKnownParticipant(config, toWorker);
+	const createdKey = idempotencyKey ?? randomUUID();
+	const message: GjcTeamMailboxMessage = {
+		message_id: messageIdFor({ teamName: config.team_name, fromWorker, toWorker, body, idempotencyKey, createdKey }),
 		from_worker: fromWorker,
 		to_worker: toWorker,
 		body,
 		created_at: now(),
+		...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
 	};
-	const mailbox = await readMailbox(dir, toWorker);
-	mailbox.messages.push(message);
-	await writeMailbox(dir, toWorker, mailbox);
-	await appendEvent(dir, { type: "message_sent", worker: fromWorker, message: body });
-	return message;
+	const written = await writeMailboxMessage(dir, toWorker, message);
+	const notification = await createMessageNotification(dir, config.team_name, written);
+	await attemptPaneNotification(dir, config, notification, env);
+	await appendEvent(dir, {
+		type: "message_sent",
+		worker: fromWorker,
+		message: body,
+		data: { to_worker: toWorker, message_id: written.message_id },
+	});
+	return written;
 }
 export async function broadcastGjcTeamMessage(
 	teamName: string,
@@ -1974,10 +2457,21 @@ export async function broadcastGjcTeamMessage(
 	body: string,
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
+	idempotencyKey?: string,
 ): Promise<GjcTeamMailboxMessage[]> {
 	const config = await readConfig(await findTeamDir(teamName, cwd, env));
 	return Promise.all(
-		config.workers.map(worker => sendGjcTeamMessage(teamName, fromWorker, worker.id, body, cwd, env)),
+		config.workers.map(worker =>
+			sendGjcTeamMessage(
+				teamName,
+				fromWorker,
+				worker.id,
+				body,
+				cwd,
+				env,
+				idempotencyKey ? `${idempotencyKey}:${worker.id}` : undefined,
+			),
+		),
 	);
 }
 export async function listGjcTeamMailbox(
@@ -1986,7 +2480,10 @@ export async function listGjcTeamMailbox(
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<GjcTeamMailboxMessage[]> {
-	return (await readMailbox(await findTeamDir(teamName, cwd, env), worker)).messages;
+	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
+	assertKnownParticipant(config, worker);
+	return (await readMailbox(dir, worker)).messages;
 }
 export async function markGjcTeamMailboxMessage(
 	teamName: string,
@@ -1996,13 +2493,29 @@ export async function markGjcTeamMailboxMessage(
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<GjcTeamMailboxMessage> {
+	assertSafeId("message_id", messageId);
 	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
+	assertKnownParticipant(config, worker);
 	const mailbox = await readMailbox(dir, worker);
-	const index = mailbox.messages.findIndex(message => message.message_id === messageId);
-	if (index < 0) throw new Error(`message_not_found:${messageId}`);
-	mailbox.messages[index] = { ...mailbox.messages[index], [field]: now() };
-	await writeMailbox(dir, worker, mailbox);
-	return mailbox.messages[index];
+	const message = mailbox.messages.find(candidate => candidate.message_id === messageId);
+	if (!message) throw new Error(`message_not_found:${messageId}`);
+	const updated = { ...message, [field]: message[field] ?? now() };
+	const written = await writeMailboxMessage(dir, worker, updated);
+	const notificationId = messageNotificationId(config.team_name, worker, messageId);
+	const existing =
+		(await readJsonFile<GjcTeamNotification>(notificationPath(dir, notificationId))) ??
+		(await createMessageNotification(dir, config.team_name, written));
+	const nextState: GjcTeamNotificationDeliveryState = field === "delivered_at" ? "acknowledged" : "delivered";
+	const before = existing.delivery_state;
+	await writeNotificationRecord(dir, { ...existing, delivery_state: nextState, updated_at: now() });
+	if (mergeNotificationState(before, nextState) !== before)
+		await appendEvent(dir, {
+			type: `message_${field === "delivered_at" ? "acknowledged" : "notified"}`,
+			worker,
+			message: messageId,
+		});
+	return written;
 }
 export async function readGjcWorkerStatus(
 	teamName: string,
@@ -2010,10 +2523,14 @@ export async function readGjcWorkerStatus(
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<WorkerStatusFile> {
+	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
+	assertKnownWorker(config, worker);
 	return (
-		(await readJsonFile<WorkerStatusFile>(
-			path.join(workerDir(await findTeamDir(teamName, cwd, env), worker), "status.json"),
-		)) ?? { state: "unknown", updated_at: now() }
+		(await readJsonFile<WorkerStatusFile>(path.join(workerDir(dir, worker), "status.json"))) ?? {
+			state: "unknown",
+			updated_at: now(),
+		}
 	);
 }
 export async function readGjcWorkerHeartbeat(
@@ -2022,9 +2539,10 @@ export async function readGjcWorkerHeartbeat(
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<WorkerHeartbeatFile | null> {
-	return readJsonFile<WorkerHeartbeatFile>(
-		path.join(workerDir(await findTeamDir(teamName, cwd, env), worker), "heartbeat.json"),
-	);
+	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
+	assertKnownWorker(config, worker);
+	return readJsonFile<WorkerHeartbeatFile>(path.join(workerDir(dir, worker), "heartbeat.json"));
 }
 export async function updateGjcWorkerHeartbeat(
 	teamName: string,
@@ -2033,8 +2551,11 @@ export async function updateGjcWorkerHeartbeat(
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<WorkerHeartbeatFile> {
+	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
+	assertKnownWorker(config, worker);
 	const value = { ...heartbeat, last_turn_at: heartbeat.last_turn_at || now() };
-	await writeJsonFile(path.join(workerDir(await findTeamDir(teamName, cwd, env), worker), "heartbeat.json"), value);
+	await writeJsonFile(path.join(workerDir(dir, worker), "heartbeat.json"), value);
 	return value;
 }
 export async function writeGjcWorkerInbox(
@@ -2044,7 +2565,10 @@ export async function writeGjcWorkerInbox(
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ path: string }> {
-	const filePath = path.join(workerDir(await findTeamDir(teamName, cwd, env), worker), "inbox.md");
+	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
+	assertKnownWorker(config, worker);
+	const filePath = path.join(workerDir(dir, worker), "inbox.md");
 	await Bun.write(filePath, content);
 	return { path: filePath };
 }
@@ -2054,7 +2578,10 @@ export async function writeGjcWorkerIdentity(
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<GjcTeamWorker> {
-	await writeJsonFile(path.join(workerDir(await findTeamDir(teamName, cwd, env), worker.id), "identity.json"), worker);
+	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
+	assertKnownWorker(config, worker.id);
+	await writeJsonFile(path.join(workerDir(dir, worker.id), "identity.json"), worker);
 	return worker;
 }
 export async function readGjcTeamEvents(
@@ -2116,6 +2643,7 @@ export async function writeGjcTaskApproval(
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<Record<string, unknown>> {
+	assertSafeId("task_id", taskId);
 	await writeJsonFile(path.join(await findTeamDir(teamName, cwd, env), "approvals", `${taskId}.json`), approval);
 	return approval;
 }
@@ -2125,6 +2653,7 @@ export async function readGjcTaskApproval(
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<Record<string, unknown> | null> {
+	assertSafeId("task_id", taskId);
 	return readJsonFile<Record<string, unknown>>(
 		path.join(await findTeamDir(teamName, cwd, env), "approvals", `${taskId}.json`),
 	);
@@ -2136,11 +2665,12 @@ export async function writeGjcShutdownRequest(
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<Record<string, unknown>> {
+	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
+	assertKnownWorker(config, worker);
+	assertKnownParticipant(config, requestedBy);
 	const value = { worker, requested_by: requestedBy, requested_at: now() };
-	await writeJsonFile(
-		path.join(workerDir(await findTeamDir(teamName, cwd, env), worker), "shutdown-request.json"),
-		value,
-	);
+	await writeJsonFile(path.join(workerDir(dir, worker), "shutdown-request.json"), value);
 	return value;
 }
 export async function readGjcShutdownAck(
@@ -2149,9 +2679,10 @@ export async function readGjcShutdownAck(
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<Record<string, unknown> | null> {
-	return readJsonFile<Record<string, unknown>>(
-		path.join(workerDir(await findTeamDir(teamName, cwd, env), worker), "shutdown-ack.json"),
-	);
+	const dir = await findTeamDir(teamName, cwd, env);
+	const config = await readConfig(dir);
+	assertKnownWorker(config, worker);
+	return readJsonFile<Record<string, unknown>>(path.join(workerDir(dir, worker), "shutdown-ack.json"));
 }
 
 export async function executeGjcTeamApiOperation(
@@ -2210,6 +2741,12 @@ export async function executeGjcTeamApiOperation(
 					cwd,
 					env,
 					typeof input.claim_token === "string" ? input.claim_token : undefined,
+					worker,
+					typeof input.evidence === "string"
+						? input.evidence
+						: typeof input.result === "string"
+							? input.result
+							: undefined,
 				),
 			};
 		case "release-task-claim":
@@ -2233,11 +2770,19 @@ export async function executeGjcTeamApiOperation(
 					String(input.body),
 					cwd,
 					env,
+					typeof input.idempotency_key === "string" ? input.idempotency_key : undefined,
 				),
 			};
 		case "broadcast":
 			return {
-				messages: await broadcastGjcTeamMessage(teamName, String(input.from_worker), String(input.body), cwd, env),
+				messages: await broadcastGjcTeamMessage(
+					teamName,
+					String(input.from_worker),
+					String(input.body),
+					cwd,
+					env,
+					typeof input.idempotency_key === "string" ? input.idempotency_key : undefined,
+				),
 			};
 		case "mailbox-list":
 			return { messages: await listGjcTeamMailbox(teamName, worker, cwd, env) };
@@ -2263,6 +2808,38 @@ export async function executeGjcTeamApiOperation(
 					env,
 				),
 			};
+		case "notification-list": {
+			const dir = await findTeamDir(teamName, cwd, env);
+			const config = await readConfig(dir);
+			await reconcileTeamNotifications(dir, config);
+			const notifications = await listNotificationRecords(dir);
+			return { notifications, summary: summarizeNotifications(notifications) };
+		}
+		case "notification-read":
+			return {
+				notification: await readNotificationRecord(
+					await findTeamDir(teamName, cwd, env),
+					String(input.notification_id),
+				),
+			};
+		case "notification-replay":
+			return replayGjcTeamNotifications(teamName, cwd, env);
+		case "notification-mark-pane-attempt": {
+			const dir = await findTeamDir(teamName, cwd, env);
+			const notification = await readNotificationRecord(dir, String(input.notification_id));
+			return {
+				notification: await writeNotificationRecord(dir, {
+					...notification,
+					delivery_state: parsePaneAttemptResult(String(input.result ?? "failed")),
+					pane_attempt_result: parsePaneAttemptResult(String(input.result ?? "failed")),
+					pane_attempt_reason: String(input.reason ?? "manual_api"),
+					pane_attempt_at: now(),
+					updated_at: now(),
+				}),
+			};
+		}
+		case "worker-startup-ack":
+			return writeGjcWorkerStartupAck(teamName, worker, cwd, env, input);
 		case "read-config":
 			return await readConfig(await findTeamDir(teamName, cwd, env));
 		case "read-manifest":
