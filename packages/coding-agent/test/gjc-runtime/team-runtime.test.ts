@@ -160,8 +160,14 @@ describe("native gjc team runtime", () => {
 		expect(snapshot.tmux_target).toBe("dry-run:0");
 		expect(snapshot.workers[0]?.pane_id).toBe("%dry-run-worker-1");
 
+		const config = await readTeamConfig(snapshot.state_dir);
+		const manifest = await Bun.file(path.join(snapshot.state_dir, "manifest.v2.json")).json();
+		expect(config.dry_run).toBe(true);
+		expect(manifest.dry_run).toBe(true);
+
 		const telemetry = await Bun.file(path.join(snapshot.state_dir, "telemetry.jsonl")).text();
-		expect(telemetry).toContain("Native gjc team runtime initialized");
+		expect(telemetry).toContain("Native gjc team dry-run state initialized");
+		expect(telemetry).toContain('"dry_run":true');
 	});
 
 	it("persists the active worker command so tmux workers use the same gjc entrypoint", async () => {

@@ -24,7 +24,7 @@ I created an earlier OpenAI code harness and `an earlier Anthropic-code harness`
 
 ## Usage
 
-Gajae-Code is published through the normal npm registry. Install the one-line npm wrapper with Bun for the recommended runtime workflow:
+Gajae-Code is published through the normal npm registry as `gajae-code`; that package installs the `gjc` binary. Install the one-line npm wrapper with Bun for the recommended runtime workflow:
 
 ```sh
 bun install -g gajae-code

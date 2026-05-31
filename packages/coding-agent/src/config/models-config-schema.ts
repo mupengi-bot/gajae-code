@@ -63,76 +63,86 @@ const ModelThinkingSchema = z.object({
 	levels: z.array(EffortSchema).optional(),
 });
 
-const RequestTransformSchema = z.object({
-	profile: z.enum(["openai-proxy"]).optional(),
-	stripHeaders: z.array(z.string().min(1)).optional(),
-	setHeaders: z.record(z.string(), z.string().nullable()).optional(),
-	extraBody: z.record(z.string(), z.unknown()).optional(),
-});
+const RequestTransformSchema = z
+	.object({
+		profile: z.enum(["openai-proxy"]).optional(),
+		stripHeaders: z.array(z.string().min(1)).optional(),
+		setHeaders: z.record(z.string(), z.string().nullable()).optional(),
+		extraBody: z.record(z.string(), z.unknown()).optional(),
+	})
+	.strict();
 
 const ModelBindingsSchema = z.object({
 	modelRoles: z.record(z.string(), z.string().min(1)).optional(),
 	agentModelOverrides: z.record(z.string(), z.string().min(1)).optional(),
 });
 
-const ModelDefinitionSchema = z.object({
-	id: z.string().min(1),
-	name: z.string().min(1).optional(),
-	api: z
-		.enum([
-			"openai-completions",
-			"openai-responses",
-			"openai-codex-responses",
-			"azure-openai-responses",
-			"anthropic-messages",
-			"google-generative-ai",
-			"google-vertex",
-		])
-		.optional(),
-	baseUrl: z.string().min(1).optional(),
-	reasoning: z.boolean().optional(),
-	thinking: ModelThinkingSchema.optional(),
-	input: z.array(z.enum(["text", "image"])).optional(),
-	cost: z
-		.object({
-			input: z.number(),
-			output: z.number(),
-			cacheRead: z.number(),
-			cacheWrite: z.number(),
-		})
-		.optional(),
-	premiumMultiplier: z.number().optional(),
-	contextWindow: z.number().optional(),
-	maxTokens: z.number().optional(),
-	headers: z.record(z.string(), z.string()).optional(),
-	compat: OpenAICompatSchema.optional(),
-	contextPromotionTarget: z.string().min(1).optional(),
-	wireModelId: z.string().min(1).optional(),
-	requestTransform: RequestTransformSchema.optional(),
-});
+const ModelDefinitionSchema = z
+	.object({
+		id: z.string().min(1),
+		name: z.string().min(1).optional(),
+		api: z
+			.enum([
+				"openai-completions",
+				"openai-responses",
+				"openai-codex-responses",
+				"azure-openai-responses",
+				"anthropic-messages",
+				"bedrock-converse-stream",
+				"google-generative-ai",
+				"google-vertex",
+				"google-gemini-cli",
+				"ollama-chat",
+				"cursor-agent",
+			])
+			.optional(),
+		baseUrl: z.string().min(1).optional(),
+		reasoning: z.boolean().optional(),
+		thinking: ModelThinkingSchema.optional(),
+		input: z.array(z.enum(["text", "image"])).optional(),
+		cost: z
+			.object({
+				input: z.number(),
+				output: z.number(),
+				cacheRead: z.number(),
+				cacheWrite: z.number(),
+			})
+			.optional(),
+		premiumMultiplier: z.number().optional(),
+		contextWindow: z.number().optional(),
+		maxTokens: z.number().optional(),
+		headers: z.record(z.string(), z.string()).optional(),
+		compat: OpenAICompatSchema.optional(),
+		contextPromotionTarget: z.string().min(1).optional(),
+		wireModelId: z.string().min(1).optional(),
+		requestTransform: RequestTransformSchema.optional(),
+	})
+	.strict();
 
-export const ModelOverrideSchema = z.object({
-	name: z.string().min(1).optional(),
-	reasoning: z.boolean().optional(),
-	thinking: ModelThinkingSchema.optional(),
-	input: z.array(z.enum(["text", "image"])).optional(),
-	cost: z
-		.object({
-			input: z.number().optional(),
-			output: z.number().optional(),
-			cacheRead: z.number().optional(),
-			cacheWrite: z.number().optional(),
-		})
-		.optional(),
-	premiumMultiplier: z.number().optional(),
-	contextWindow: z.number().optional(),
-	maxTokens: z.number().optional(),
-	headers: z.record(z.string(), z.string()).optional(),
-	compat: OpenAICompatSchema.optional(),
-	contextPromotionTarget: z.string().min(1).optional(),
-	wireModelId: z.string().min(1).optional(),
-	requestTransform: RequestTransformSchema.optional(),
-});
+export const ModelOverrideSchema = z
+	.object({
+		name: z.string().min(1).optional(),
+		reasoning: z.boolean().optional(),
+		thinking: ModelThinkingSchema.optional(),
+		input: z.array(z.enum(["text", "image"])).optional(),
+		cost: z
+			.object({
+				input: z.number().optional(),
+				output: z.number().optional(),
+				cacheRead: z.number().optional(),
+				cacheWrite: z.number().optional(),
+			})
+			.optional(),
+		premiumMultiplier: z.number().optional(),
+		contextWindow: z.number().optional(),
+		maxTokens: z.number().optional(),
+		headers: z.record(z.string(), z.string()).optional(),
+		compat: OpenAICompatSchema.optional(),
+		contextPromotionTarget: z.string().min(1).optional(),
+		wireModelId: z.string().min(1).optional(),
+		requestTransform: RequestTransformSchema.optional(),
+	})
+	.strict();
 
 export type ModelOverride = z.infer<typeof ModelOverrideSchema>;
 
@@ -145,49 +155,57 @@ export const ProviderAuthSchema = z.enum(["apiKey", "none", "oauth"]);
 export type ProviderAuthMode = z.infer<typeof ProviderAuthSchema>;
 export type ProviderDiscovery = z.infer<typeof ProviderDiscoverySchema>;
 
-const ProviderConfigSchema = z.object({
-	baseUrl: z.string().min(1).optional(),
-	apiKey: z.string().min(1).optional(),
-	apiKeyEnv: z.string().min(1).optional(),
-	api: z
-		.enum([
-			"openai-completions",
-			"openai-responses",
-			"openai-codex-responses",
-			"azure-openai-responses",
-			"anthropic-messages",
-			"google-generative-ai",
-			"google-vertex",
-		])
-		.optional(),
-	headers: z.record(z.string(), z.string()).optional(),
-	compat: OpenAICompatSchema.optional(),
-	authHeader: z.boolean().optional(),
-	auth: ProviderAuthSchema.optional(),
-	discovery: ProviderDiscoverySchema.optional(),
-	requestTransform: RequestTransformSchema.optional(),
-	models: z.array(ModelDefinitionSchema).optional(),
-	modelOverrides: z.record(z.string(), ModelOverrideSchema).optional(),
-	disableStrictTools: z.boolean().optional(),
-	/**
-	 * Streaming transport override. When set to `"pi-native"`, gjc dispatches
-	 * every model under this provider via the auth-gateway's
-	 * `POST /v1/pi/stream` endpoint instead of the per-provider SDK. The
-	 * provider's `baseUrl` must point at a compatible `gjc auth-gateway`
-	 * and `apiKey` must carry the gateway bearer.
-	 */
-	transport: z.literal("pi-native").optional(),
-});
+const ProviderConfigSchema = z
+	.object({
+		baseUrl: z.string().min(1).optional(),
+		apiKey: z.string().min(1).optional(),
+		apiKeyEnv: z.string().min(1).optional(),
+		api: z
+			.enum([
+				"openai-completions",
+				"openai-responses",
+				"openai-codex-responses",
+				"azure-openai-responses",
+				"anthropic-messages",
+				"bedrock-converse-stream",
+				"google-generative-ai",
+				"google-vertex",
+				"google-gemini-cli",
+				"ollama-chat",
+				"cursor-agent",
+			])
+			.optional(),
+		headers: z.record(z.string(), z.string()).optional(),
+		compat: OpenAICompatSchema.optional(),
+		authHeader: z.boolean().optional(),
+		auth: ProviderAuthSchema.optional(),
+		discovery: ProviderDiscoverySchema.optional(),
+		requestTransform: RequestTransformSchema.optional(),
+		models: z.array(ModelDefinitionSchema).optional(),
+		modelOverrides: z.record(z.string(), ModelOverrideSchema).optional(),
+		disableStrictTools: z.boolean().optional(),
+		/**
+		 * Streaming transport override. When set to `"pi-native"`, gjc dispatches
+		 * every model under this provider via the auth-gateway's
+		 * `POST /v1/pi/stream` endpoint instead of the per-provider SDK. The
+		 * provider's `baseUrl` must point at a compatible `gjc auth-gateway`
+		 * and `apiKey` must carry the gateway bearer.
+		 */
+		transport: z.literal("pi-native").optional(),
+	})
+	.strict();
 
 const EquivalenceConfigSchema = z.object({
 	overrides: z.record(z.string(), z.string().min(1)).optional(),
 	exclude: z.array(z.string().min(1)).optional(),
 });
 
-export const ModelsConfigSchema = z.object({
-	providers: z.record(z.string(), ProviderConfigSchema).optional(),
-	modelBindings: ModelBindingsSchema.optional(),
-	equivalence: EquivalenceConfigSchema.optional(),
-});
+export const ModelsConfigSchema = z
+	.object({
+		providers: z.record(z.string(), ProviderConfigSchema).optional(),
+		modelBindings: ModelBindingsSchema.optional(),
+		equivalence: EquivalenceConfigSchema.optional(),
+	})
+	.strict();
 
 export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;

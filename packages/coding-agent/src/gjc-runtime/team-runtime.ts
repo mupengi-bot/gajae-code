@@ -89,6 +89,7 @@ export interface GjcTeamConfig {
 	tmux_session_name: string;
 	tmux_target: string;
 	workspace_mode: "direct" | "worktree";
+	dry_run: boolean;
 	leader: GjcTeamLeader;
 	leader_cwd: string;
 	team_state_root: string;
@@ -437,6 +438,7 @@ async function readConfig(dir: string): Promise<GjcTeamConfig> {
 		tmux_session: tmuxSessionName,
 		tmux_session_name: tmuxSessionName,
 		tmux_target: config.tmux_target ?? config.tmux_session ?? tmuxSessionName,
+		dry_run: config.dry_run ?? config.tmux_session_name === "dry-run",
 		leader_cwd: config.leader_cwd ?? config.leader.cwd,
 		team_state_root: config.team_state_root ?? config.state_root,
 		worker_cli_plan: config.worker_cli_plan ?? Array.from({ length: config.worker_count }, () => "gjc"),
@@ -1511,6 +1513,7 @@ export async function startGjcTeam(options: GjcTeamStartOptions): Promise<GjcTea
 		tmux_session_name: tmuxContext.sessionName,
 		tmux_target: tmuxContext.target,
 		workspace_mode: worktreeMode.enabled ? "worktree" : "direct",
+		dry_run: options.dryRun ?? false,
 		leader: { session_id: env.GJC_SESSION_ID ?? env.CODEX_SESSION_ID ?? "", pane_id: tmuxContext.leaderPaneId, cwd },
 		leader_cwd: cwd,
 		team_state_root: stateRoot,
@@ -1534,6 +1537,7 @@ export async function startGjcTeam(options: GjcTeamStartOptions): Promise<GjcTea
 		leader: config.leader,
 		workers: config.workers,
 		workspace_mode: config.workspace_mode,
+		dry_run: config.dry_run,
 		created_at: createdAt,
 		updated_at: createdAt,
 	});
@@ -1541,17 +1545,25 @@ export async function startGjcTeam(options: GjcTeamStartOptions): Promise<GjcTea
 	for (const task of buildInitialTasks(options.task, config.workers)) await writeTask(dir, task);
 	await appendEvent(dir, {
 		type: "team_started",
-		message: "Started native gjc team runtime",
-		data: { worker_count: options.workerCount, agent_type: options.agentType, workspace_mode: config.workspace_mode },
+		message: options.dryRun
+			? "Created native gjc team dry-run state without starting tmux workers"
+			: "Started native gjc team runtime",
+		data: {
+			worker_count: options.workerCount,
+			agent_type: options.agentType,
+			workspace_mode: config.workspace_mode,
+			dry_run: config.dry_run,
+		},
 	});
 	await appendTelemetry(dir, {
 		type: "team_runtime",
-		message: "Native gjc team runtime initialized",
+		message: options.dryRun ? "Native gjc team dry-run state initialized" : "Native gjc team runtime initialized",
 		data: {
 			state_root: stateRoot,
 			worker_command: config.worker_command,
 			worker_cli_plan: workerCliPlan,
 			workspace_mode: config.workspace_mode,
+			dry_run: config.dry_run,
 		},
 	});
 	let tmuxWorkers: GjcTeamWorker[];

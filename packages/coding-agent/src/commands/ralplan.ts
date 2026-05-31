@@ -3,9 +3,9 @@ import { syncSkillActiveState } from "../skill-state/active-state";
 import { runGjcRuntimeBridgeWithHudSidecar } from "./gjc-runtime-bridge";
 
 export default class Ralplan extends Command {
-	static description = "Run private GJC RALPLAN workflow commands";
+	static description = "Run private GJC RALPLAN bridge commands (requires GJC_RUNTIME_BINARY)";
 	static strict = false;
-	static examples = ["$ gjc ralplan --help"];
+	static examples = ["$ GJC_RUNTIME_BINARY=/path/to/private-runtime gjc ralplan --help"];
 
 	async run(): Promise<void> {
 		const cwd = process.cwd();

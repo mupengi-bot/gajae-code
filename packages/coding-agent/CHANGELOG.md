@@ -5,6 +5,7 @@
 ### Added
 
 - Added `gjc session` for listing, inspecting, removing, and attaching GJC-managed tmux sessions.
+- Added stricter `models.yml` validation and docs for OpenAI-compatible proxy providers, bridge-command requirements, and team dry-run state behavior.
 
 ### Changed
 

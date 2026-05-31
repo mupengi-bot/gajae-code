@@ -71,7 +71,7 @@ function parseInputFlag(argv: string[]): Record<string, unknown> {
 }
 
 export default class Team extends Command {
-	static description = "Run native GJC tmux team orchestration commands";
+	static description = "Run native GJC tmux team orchestration; --dry-run writes ephemeral .gjc/state/team state only";
 	static strict = false;
 
 	static args = {
@@ -83,13 +83,18 @@ export default class Team extends Command {
 
 	static flags = {
 		json: Flags.boolean({ char: "j", description: "Emit machine-readable JSON", default: false }),
-		"dry-run": Flags.boolean({ description: "Create team state without starting tmux panes", default: false }),
+		"dry-run": Flags.boolean({
+			description:
+				"Create ephemeral .gjc/state/team state without starting tmux panes; do not commit generated state",
+			default: false,
+		}),
 	};
 
 	static examples = [
 		'gjc team 3:executor "Implement the approved plan"',
 		"gjc team status <team-name> --json",
 		'gjc team api claim-task --input \'{"team_name":"demo","worker_id":"worker-1"}\' --json',
+		'gjc team 2:executor --dry-run --json "Preview state only"',
 		"gjc team shutdown <team-name>",
 	];
 
@@ -184,6 +189,7 @@ export default class Team extends Command {
 			`tmux: ${snapshot.tmux_session}`,
 			`state: ${snapshot.state_dir}`,
 			`workers: ${snapshot.workers.length}`,
+			...(dryRun ? ["dry-run: wrote ephemeral .gjc/state/team state only; do not commit generated .gjc state"] : []),
 		]);
 	}
 }

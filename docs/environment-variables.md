@@ -189,6 +189,50 @@ providers:
 
 For OpenRouter traffic, GJC explicitly sends `User-Agent: Gajae-Code/<package version>` plus OpenRouter attribution headers. For the built-in OpenAI Responses transport and generic OpenAI-compatible Chat Completions transport, GJC passes model/provider headers through the OpenAI JavaScript SDK and does not set a GJC user-agent unless the provider-specific code adds one.
 
+### OpenAI-compatible proxy provider config
+
+For OpenAI-compatible proxies that only implement Chat Completions, prefer a custom `models.yml` provider over `OPENAI_BASE_URL`:
+
+```yaml
+providers:
+  openai-compatible:
+    baseUrl: https://proxy.example.com/v1
+    apiKeyEnv: OPENAI_API_KEY
+    api: openai-completions
+    auth: apiKey
+    headers:
+      User-Agent: curl/8.7.1
+    models:
+      - id: gpt-4o
+        name: GPT-4o via proxy
+        reasoning: false
+        input: [text]
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+```
+
+`models.yml` is strict: unsupported provider/model keys fail validation before the provider request is dispatched.
+
+### GJC workflow bridge commands
+
+`gjc ralplan`, `gjc deep-interview`, and `gjc state` are private runtime bridge commands. They require `GJC_RUNTIME_BINARY` (or legacy `GJC_LEGACY_RUNTIME_BINARY`) to point at the private runtime executable; public bundled workflow use remains through `/skill:ralplan` and `/skill:deep-interview` inside a GJC session.
+
+| Variable | Behavior |
+| --- | --- |
+| `GJC_RUNTIME_BINARY` | Private runtime bridge binary for `gjc ralplan`, `gjc deep-interview`, and `gjc state` |
+| `GJC_LEGACY_RUNTIME_BINARY` | Legacy fallback bridge binary name |
+
+### Team dry-run and state paths
+
+`gjc team ... --dry-run --json` creates the same machine-readable state tree as a team launch without starting tmux panes. By default that state is written under `<cwd>/.gjc/state/team/<team>/`; treat it as ephemeral smoke-test/review state. Do not commit generated `.gjc/state/team` contents. Remove the generated team directory after a dry-run when the harness no longer needs it.
+
+| Variable | Behavior |
+| --- | --- |
+| `GJC_TEAM_STATE_ROOT` | Overrides the team state root (default `<cwd>/.gjc/state/team`) |
+| `GJC_TEAM_TMUX_COMMAND` | tmux binary/command override for team launch |
+| `GJC_TEAM_WORKER_COMMAND` | Worker GJC command override |
+| `GJC_TEAM_WORKER_CLI` | Team worker CLI selector; accepted values are `auto` or `gjc` |
+| `GJC_TEAM_WORKER_CLI_MAP` | Comma-separated worker CLI selector map; entries must be `auto` or `gjc` |
+
 ### Google Vertex AI
 
 | Variable                         | Required?                      | Notes                                                                                                                     |

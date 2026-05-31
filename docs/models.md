@@ -76,13 +76,6 @@ providers:
         maxTokens: 16384
         headers:
           X-Model: value
-        wireModelId: upstream-model-id
-        requestTransform:
-          profile: openai-proxy
-          setHeaders:
-            X-Proxy-Route: default
-          extraBody:
-            gateway: default
         thinking:
           minLevel: low
           maxLevel: xhigh
@@ -121,27 +114,24 @@ modelBindings:
 ### Allowed auth/discovery values
 
 - `auth`: `apiKey` (default), `none`, or `oauth`; for `models.yml` custom models, `oauth` is accepted by schema but does not waive the `apiKey` requirement
+- `models.yml` is strict: unknown provider/model keys fail validation before provider dispatch, so stale keys such as `requestTransform` or `wireModelId` only work where this document lists them.
 - `discovery.type`: `ollama`, `llama.cpp`, or `lm-studio`
 
-## OpenAI-compatible proxy request shaping
+## OpenAI-compatible proxy configuration
 
-OpenAI-compatible proxy providers can declare request shaping without hardcoding a provider name:
+OpenAI-compatible proxy providers should use schema-supported provider keys first:
 
 ```yaml
 providers:
   proxy-provider:
     baseUrl: https://api.proxy.example/v1
-    apiKey: PROXY_API_KEY
+    apiKeyEnv: PROXY_API_KEY
     api: openai-completions
-    requestTransform:
-      profile: openai-proxy
-      setHeaders:
-        X-Proxy-Route: default
-      extraBody:
-        gateway: default
+    auth: apiKey
+    headers:
+      User-Agent: curl/8.7.1
     models:
       - id: local-gpt
-        wireModelId: upstream/gpt-5.5
         name: Local GPT
         reasoning: true
         input: [text]
@@ -150,8 +140,13 @@ providers:
         maxTokens: 128000
 ```
 
-`requestTransform.profile: openai-proxy` strips OpenAI SDK/Stainless telemetry headers at final fetch time and sets a generic GJC user agent. Explicit config wins over the preset:
+Use provider-level `headers` for proxy-required headers. Keep the provider `api` set to `openai-completions` when the proxy exposes Chat Completions-compatible `/v1/chat/completions` semantics. `auth: apiKey` sends the resolved token as bearer auth; use `auth: none` only for trusted local/no-auth endpoints.
 
+`requestTransform` and `wireModelId` remain supported for request-body shaping, but they are not needed for ordinary OpenAI-compatible proxies whose local model id is already the upstream wire id. Unknown config keys fail validation before a provider request is sent.
+
+When request shaping is needed:
+
+- `requestTransform.profile: openai-proxy` strips OpenAI SDK/Stainless telemetry headers at final fetch time and sets a generic GJC user agent.
 - `stripHeaders` replaces the preset strip list when provided.
 - `setHeaders` is applied after stripping; use `null` to remove a header.
 - `extraBody` is shallow-merged into the JSON request body after provider compatibility fields; core transport keys such as `model`, `messages`/`input`, `stream`, `tools`, and `tool_choice` are protected and ignored.
@@ -164,13 +159,13 @@ providers:
 providers:
   layofflabs:
     baseUrl: https://api.layofflabs.com/v1
-    apiKeyEnv: LAYOFFLABS_API_KEY
+    apiKeyEnv: OPENAI_API_KEY
     api: openai-completions
-    requestTransform:
-      profile: openai-proxy
+    auth: apiKey
+    headers:
+      User-Agent: curl/8.7.1
     models:
       - id: gpt-5.5
-        wireModelId: gpt-5.5
         name: GPT 5.5 via Layofflabs
         reasoning: true
         thinking:
@@ -221,6 +216,7 @@ Must define at least one of:
 
 - `id` required
 - `contextWindow` and `maxTokens` must be positive if provided
+- unknown provider, model, override, and request-transform keys fail schema validation; remove stale keys instead of relying on them being ignored.
 
 ## Merge and override order
 

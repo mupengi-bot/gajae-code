@@ -2693,6 +2693,41 @@ describe("ModelRegistry", () => {
 		);
 	});
 
+	test("rejects unknown provider and model config keys before provider dispatch", () => {
+		writeRawModelsConfig({
+			providers: {
+				layofflabs: {
+					baseUrl: "https://api.layofflabs.com/v1",
+					apiKeyEnv: "OPENAI_API_KEY",
+					api: "openai-completions",
+					auth: "apiKey",
+					requestTransform: { profile: "openai-proxy" },
+					models: [
+						{
+							id: "gpt-5.5",
+							name: "GPT 5.5 via Layofflabs",
+							reasoning: true,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 400000,
+							maxTokens: 128000,
+							unsupportedModelKey: true,
+						},
+					],
+					unsupportedProviderKey: true,
+				},
+			},
+		});
+
+		const registry = new ModelRegistry(authStorage, modelsJsonPath);
+		const message = String(registry.getError()?.message);
+
+		expect(message).toContain("/providers/layofflabs");
+		expect(message).toContain("unsupportedProviderKey");
+		expect(message).toContain("/providers/layofflabs/models/0");
+		expect(message).toContain("unsupportedModelKey");
+	});
+
 	test("rejects model-level request shaping on non-OpenAI-compatible APIs", () => {
 		writeRawModelsConfig({
 			providers: {
