@@ -110,6 +110,12 @@ export interface ExtensionUIDialogOptions {
 	onExternalEditor?: () => void;
 	/** Optional footer hint text rendered by interactive selector */
 	helpText?: string;
+	/**
+	 * For interactive TUI select dialogs, render the focused option across
+	 * multiple rows instead of truncating it. This is a select-only rendering
+	 * hint; non-TUI bridges (RPC, ACP) drop it and do not serialize it.
+	 */
+	wrapFocused?: boolean;
 }
 
 /** Raw terminal input listener for extensions. */

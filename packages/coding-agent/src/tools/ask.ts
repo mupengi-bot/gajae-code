@@ -149,6 +149,7 @@ interface UIContext {
 			timeout?: number;
 			signal?: AbortSignal;
 			outline?: boolean;
+			wrapFocused?: boolean;
 			onTimeout?: () => void;
 			onLeft?: () => void;
 			onRight?: () => void;
@@ -194,6 +195,7 @@ async function askSingleQuestion(
 			timeout,
 			signal,
 			outline: true,
+			wrapFocused: true,
 			onTimeout,
 			helpText,
 			onLeft: navigation?.allowBack
