@@ -122,7 +122,7 @@ describe("gjc harness CLI (foundation)", () => {
 	it("owner-runtime verbs report an honest pending milestone", () => {
 		const started = runHarness(["start", "--input", JSON.stringify({ harness: "gajae-code", workspace })]);
 		const sessionId = started.json.evidence.handle.sessionId as string;
-		const res = runHarness(["finalize", "--session", sessionId]);
+		const res = runHarness(["recover", "--session", sessionId]);
 		expect(res.code).toBe(1);
 		expect(res.json.ok).toBe(false);
 		expect(res.json.evidence.pending).toBe(true);

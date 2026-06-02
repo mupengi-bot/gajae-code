@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import type { FinalizeChecks } from "../../src/harness-control-plane/finalize";
 import { RuntimeOwner } from "../../src/harness-control-plane/owner";
 import type { HarnessRpc, RpcStateSnapshot } from "../../src/harness-control-plane/rpc-adapter";
 import { writeSessionState } from "../../src/harness-control-plane/storage";
@@ -68,10 +69,32 @@ async function runHarness(args: string[]): Promise<{ code: number; json: Record<
 	return { code, json };
 }
 
+const passingFinalizeChecks: FinalizeChecks = {
+	async runValidation(spec) {
+		return { exactCommand: spec.command, cwd: ".", exitStatus: 0, pass: true };
+	},
+	async resolveCommit() {
+		return "abc123";
+	},
+	async commitOnBranch() {
+		return true;
+	},
+	async prOrIssue() {
+		return { prUrl: "https://x/pr/1", issueArtifact: null };
+	},
+};
+
 beforeEach(async () => {
 	root = await mkdtemp(path.join(tmpdir(), "h"));
 	await writeSessionState(root, seed(root));
-	owner = new RuntimeOwner({ root, sessionId: SID, rpc: new FakeRpc(), acceptanceTimeoutMs: 200 });
+	owner = new RuntimeOwner({
+		root,
+		sessionId: SID,
+		rpc: new FakeRpc(),
+		acceptanceTimeoutMs: 200,
+		finalizeChecks: passingFinalizeChecks,
+		validationCommands: [{ name: "test", command: "bun test" }],
+	});
 	await owner.start();
 });
 
@@ -99,5 +122,15 @@ describe("gjc harness CLI -> live owner routing", () => {
 		const state = res.json?.state as Record<string, unknown>;
 		expect(evidence.ownerRouted).toBe(true);
 		expect(state.ownerLive).toBe(true);
+	}, 30_000);
+
+	it("finalize routes to the live owner and completes the evidence gate", async () => {
+		const res = await runHarness(["finalize", "--session", SID, "--input", "{}"]);
+		expect(res.code).toBe(0);
+		expect(res.json?.ok).toBe(true);
+		const evidence = res.json?.evidence as Record<string, unknown>;
+		const state = res.json?.state as Record<string, unknown>;
+		expect((evidence.finalize as Record<string, unknown>).completed).toBe(true);
+		expect(state.lifecycle).toBe("completed");
 	}, 30_000);
 });

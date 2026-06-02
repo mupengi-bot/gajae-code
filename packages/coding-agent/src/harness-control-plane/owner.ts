@@ -12,6 +12,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { ControlServer, type EndpointRequest } from "./control-endpoint";
+import { defaultFinalizeChecks, type FinalizeChecks, runFinalize, type ValidationCommandSpec } from "./finalize";
 import type { HarnessRpc } from "./rpc-adapter";
 import { singleFlightAccept } from "./rpc-adapter";
 import {
@@ -36,6 +37,8 @@ export interface OwnerOptions {
 	heartbeatMs?: number;
 	acceptanceTimeoutMs?: number;
 	clock?: () => number;
+	finalizeChecks?: FinalizeChecks;
+	validationCommands?: ValidationCommandSpec[];
 }
 
 export interface OwnerStartInfo {
@@ -50,12 +53,14 @@ const DEFAULT_ACCEPT_TIMEOUT_MS = 60_000;
 
 export class RuntimeOwner {
 	readonly ownerId: string;
-	#opts: Required<Omit<OwnerOptions, "clock">> & { clock?: () => number };
+	#opts: Required<Omit<OwnerOptions, "clock" | "finalizeChecks" | "validationCommands">> & { clock?: () => number };
 	#server: ControlServer;
 	#cursor = 0;
 	#leaseEpoch = 0;
 	#heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 	#socketPath: string;
+	#finalizeChecks?: FinalizeChecks;
+	#validationCommands?: ValidationCommandSpec[];
 
 	constructor(opts: OwnerOptions) {
 		this.ownerId = opts.ownerId ?? `owner-${randomUUID()}`;
@@ -70,6 +75,8 @@ export class RuntimeOwner {
 			acceptanceTimeoutMs: opts.acceptanceTimeoutMs ?? DEFAULT_ACCEPT_TIMEOUT_MS,
 			clock: opts.clock,
 		};
+		this.#finalizeChecks = opts.finalizeChecks;
+		this.#validationCommands = opts.validationCommands;
 		this.#server = new ControlServer(this.#socketPath, req => this.#handle(req));
 	}
 
@@ -149,9 +156,38 @@ export class RuntimeOwner {
 				return this.#observe();
 			case "retire":
 				return this.#retire();
+			case "finalize":
+				return this.#finalize(req.input);
 			default:
 				return { ok: false, error: `owner_unsupported_verb:${req.verb}` };
 		}
+	}
+
+	async #finalize(input: Record<string, unknown>): Promise<PrimitiveResponse> {
+		const state = await this.#loadState();
+		const workspace = state.handle.workspace;
+		const checks = this.#finalizeChecks ?? defaultFinalizeChecks(workspace);
+		const fin = await runFinalize({
+			root: this.#opts.root,
+			sessionId: this.#opts.sessionId,
+			workspace,
+			branch: state.handle.branch ?? "",
+			requireTests: input.requireTests !== false,
+			requireCommit: input.requireCommit !== false,
+			requirePr: input.requirePr !== false,
+			validationCommands: this.#validationCommands,
+			checks,
+			clock: this.#opts.clock,
+		});
+		state.lifecycle = fin.completed ? "completed" : "blocked";
+		state.updatedAt = new Date(this.#opts.clock ? this.#opts.clock() : Date.now()).toISOString();
+		if (!fin.completed) state.blockers = fin.blockers;
+		await writeSessionState(this.#opts.root, state);
+		await this.#emit(fin.completed ? "info" : "critical", "finalized", {
+			completed: fin.completed,
+			blockers: fin.blockers,
+		});
+		return this.#response(state, { finalize: fin }, fin.completed);
 	}
 
 	async #submit(input: Record<string, unknown>): Promise<PrimitiveResponse> {

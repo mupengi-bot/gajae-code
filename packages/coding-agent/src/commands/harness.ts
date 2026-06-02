@@ -160,9 +160,10 @@ export default class Harness extends Command {
 					return await this.#events(root, input, flags.session, Number(flags.cursor) || 0);
 				case "retire":
 					return await this.#retire(root, input, flags.session);
+				case "finalize":
+					return await this.#finalizeVerb(root, input, flags.session);
 				case "recover":
 				case "validate":
-				case "finalize":
 				case "operate":
 					return await this.#pending(root, verb, input, flags.session);
 				default:
@@ -172,6 +173,15 @@ export default class Harness extends Command {
 			writeJson({ ok: false, error: error instanceof Error ? error.message : String(error), verb });
 			process.exitCode = 1;
 		}
+	}
+
+	async #finalizeVerb(root: string, input: Record<string, unknown>, flagSession: string | undefined): Promise<void> {
+		const sessionId = requireSessionId(input, flagSession);
+		if (await this.#tryOwnerRoute(root, sessionId, "finalize", { ...input, sessionId })) return;
+		// finalize is owner-routed; without a live owner, report owner-not-live (start the owner first).
+		const state = await loadState(root, sessionId);
+		writeJson(buildResponse(state, false, { completed: false, reason: "owner-not-live" }, false));
+		process.exitCode = 1;
 	}
 
 	async #start(root: string, input: Record<string, unknown>): Promise<void> {
