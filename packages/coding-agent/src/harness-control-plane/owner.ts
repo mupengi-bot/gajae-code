@@ -327,7 +327,7 @@ export class RuntimeOwner {
 			finalizeChecks: this.#finalizeChecks ?? defaultFinalizeChecks(state.handle.workspace),
 			validationCommands: this.#validationCommands,
 			maxIterations: typeof input.maxIterations === "number" ? input.maxIterations : 5,
-			eventWriter: { ownerId: this.ownerId, leaseEpoch: this.#leaseEpoch },
+			emit: (severity, kind, evidence) => this.#emit(severity, kind, evidence),
 		});
 		// Persist the loop's terminal lifecycle/blockers so the response state is not stale.
 		state = await this.#loadState();

@@ -20,6 +20,7 @@ import {
 	validateReceipt,
 } from "./receipts";
 import { type HarnessRpc, singleFlightAccept } from "./rpc-adapter";
+import { nextAllowedActions } from "./state-machine";
 import { appendEvent, readEvents, writeReceiptImmutable } from "./storage";
 import {
 	DEFAULT_RETRY_BUDGET,
@@ -28,6 +29,7 @@ import {
 	type Observation,
 	type RecoveryClassification,
 	type RetryBudget,
+	type SessionStateView,
 	type Severity,
 } from "./types";
 
@@ -50,6 +52,8 @@ export interface OperateOptions {
 	maxIterations?: number;
 	/** Identity stamped on emitted events; the owner passes its lease identity so events stay single-writer-consistent. */
 	eventWriter?: { ownerId: string; leaseEpoch: number };
+	/** Injected event emitter (the owner passes its single-writer #emit so events share cursor/lease/state). */
+	emit?: (severity: Severity, kind: string, evidence: Record<string, unknown>) => Promise<void>;
 	clock?: () => number;
 }
 
@@ -75,20 +79,29 @@ export async function operate(goal: string, opts: OperateOptions): Promise<Opera
 	let rpc = opts.rpc;
 
 	const now = (): string => new Date(opts.clock ? opts.clock() : Date.now()).toISOString();
-	const emit = async (severity: Severity, kind: string, evidence: Record<string, unknown>): Promise<void> => {
+	let lifecycle: HarnessLifecycle = "started";
+	const defaultEmit = async (severity: Severity, kind: string, evidence: Record<string, unknown>): Promise<void> => {
+		const state: SessionStateView = {
+			sessionId: opts.sessionId,
+			lifecycle,
+			harness: "gajae-code",
+			ownerLive: true,
+			blockers,
+		};
 		const envelope: EventEnvelope = {
 			eventId: randomUUID(),
 			cursor: ++cursor,
 			createdAt: now(),
 			severity,
 			kind,
-			state: { sessionId: opts.sessionId, lifecycle: "observing", harness: "gajae-code", ownerLive: true, blockers },
+			state,
 			evidence,
-			nextAllowedActions: [],
+			nextAllowedActions: nextAllowedActions(lifecycle, true),
 			writer: opts.eventWriter ?? { ownerId: "operate", leaseEpoch: 0 },
 		};
 		await appendEvent(opts.root, opts.sessionId, envelope);
 	};
+	const emit = opts.emit ?? defaultEmit;
 
 	const writeVanish = async (obs: Observation, classification: RecoveryClassification): Promise<boolean> => {
 		const dirty = obs.gitDelta === "dirty" || obs.gitDelta === "unknown";
@@ -140,7 +153,7 @@ export async function operate(goal: string, opts: OperateOptions): Promise<Opera
 
 	await emit("info", "operate_started", { goal });
 	let accepted = await submit();
-	let lifecycle: HarnessLifecycle = accepted ? "observing" : "submitted";
+	lifecycle = accepted ? "observing" : "submitted";
 	let iterations = 0;
 
 	while (iterations < maxIterations) {
