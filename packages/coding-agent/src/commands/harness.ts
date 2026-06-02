@@ -12,6 +12,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { Args, Command, Flags } from "@gajae-code/utils/cli";
 import { classifyRecovery } from "../harness-control-plane/classifier";
+import { callEndpoint, EndpointUnreachableError } from "../harness-control-plane/control-endpoint";
+import { resolveOwner } from "../harness-control-plane/owner";
 import { buildResponse, buildStateView } from "../harness-control-plane/state-machine";
 import {
 	generateSessionId,
@@ -220,8 +222,30 @@ export default class Harness extends Command {
 		writeJson(buildResponse(state, ownerLive, { handle, ownerRuntime: "pending-m3" }));
 	}
 
+	/** Returns true if a live owner handled the verb (response already printed). */
+	async #tryOwnerRoute(
+		root: string,
+		sessionId: string,
+		verb: string,
+		input: Record<string, unknown>,
+	): Promise<boolean> {
+		const owner = await resolveOwner(root, sessionId);
+		if (!owner.live || !owner.socketPath) return false;
+		try {
+			const res = (await callEndpoint(owner.socketPath, { verb, input })) as { ok?: boolean };
+			writeJson(res);
+			if (res?.ok === false) process.exitCode = 1;
+			return true;
+		} catch (error) {
+			if (error instanceof EndpointUnreachableError) return false;
+			throw error;
+		}
+	}
+
 	async #observe(root: string, input: Record<string, unknown>, flagSession: string | undefined): Promise<void> {
-		const state = await loadState(root, requireSessionId(input, flagSession));
+		const sessionId = requireSessionId(input, flagSession);
+		if (await this.#tryOwnerRoute(root, sessionId, "observe", { ...input, sessionId })) return;
+		const state = await loadState(root, sessionId);
 		const ownerLive = ownerLiveFor(state);
 		const observation = buildObservation(state, ownerLive);
 		writeJson(buildResponse(state, ownerLive, { observation, readOnly: !ownerLive }));
@@ -268,17 +292,11 @@ export default class Harness extends Command {
 	}
 
 	async #submit(root: string, input: Record<string, unknown>, flagSession: string | undefined): Promise<void> {
-		const state = await loadState(root, requireSessionId(input, flagSession));
-		const ownerLive = ownerLiveFor(state);
-		// Owner-routed: foundation has no live owner, so submission is blocked (never echoed-as-accepted).
-		writeJson(
-			buildResponse(
-				state,
-				ownerLive,
-				{ accepted: false, submitted: false, reason: "owner-not-live", ownerRuntime: "pending-m3" },
-				false,
-			),
-		);
+		const sessionId = requireSessionId(input, flagSession);
+		if (await this.#tryOwnerRoute(root, sessionId, "submit", { ...input, sessionId })) return;
+		const state = await loadState(root, sessionId);
+		// No live owner: submission is blocked (never echoed-as-accepted).
+		writeJson(buildResponse(state, false, { accepted: false, submitted: false, reason: "owner-not-live" }, false));
 		process.exitCode = 1;
 	}
 
@@ -302,7 +320,9 @@ export default class Harness extends Command {
 	}
 
 	async #retire(root: string, input: Record<string, unknown>, flagSession: string | undefined): Promise<void> {
-		const state = await loadState(root, requireSessionId(input, flagSession));
+		const sessionId = requireSessionId(input, flagSession);
+		if (await this.#tryOwnerRoute(root, sessionId, "retire", { ...input, sessionId })) return;
+		const state = await loadState(root, sessionId);
 		const observation = buildObservation(state, ownerLiveFor(state));
 		if (observation.gitDelta === "dirty" || observation.gitDelta === "unknown") {
 			writeJson(
