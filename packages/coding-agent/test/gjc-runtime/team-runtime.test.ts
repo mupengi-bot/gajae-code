@@ -691,6 +691,60 @@ describe("native gjc team runtime", () => {
 		expect(shutdownRequest.request_id).toBe(stopped.worker_lifecycle_by_id["worker-1"]?.shutdown_request_id);
 	});
 
+	it("writes versioned structured traces linked to legacy events", async () => {
+		cleanupRoot = await fs.mkdtemp(path.join(os.tmpdir(), "gjc-team-runtime-"));
+		const snapshot = await startGjcTeam({
+			workerCount: 1,
+			agentType: "executor",
+			task: "Trace runtime events",
+			teamName: "trace-team",
+			cwd: cleanupRoot,
+			dryRun: true,
+			env: { PATH: "" },
+		});
+		const stateDir = snapshot.state_dir;
+		const firstEvent = JSON.parse((await readEvents(stateDir)).trim().split(/\r?\n/)[0] ?? "") as {
+			event_id: string;
+			type: string;
+		};
+		const firstTrace = JSON.parse(
+			(await Bun.file(path.join(stateDir, "trace.jsonl")).text()).trim().split(/\r?\n/)[0] ?? "",
+		) as {
+			schema_version: number;
+			trace_id: string;
+			span_id: string;
+			source_event_id: string;
+			event_type: string;
+		};
+		expect(firstTrace.schema_version).toBe(1);
+		expect(firstTrace.trace_id.startsWith("trace-")).toBe(true);
+		expect(firstTrace.span_id.startsWith("span-")).toBe(true);
+		expect(firstTrace.source_event_id).toBe(firstEvent.event_id);
+		expect(firstTrace.event_type).toBe(firstEvent.type);
+
+		const claim = await claimGjcTeamTask("trace-team", "worker-1", cleanupRoot, { PATH: "" });
+		expect(claim.ok).toBe(true);
+		await transitionGjcTeamTask(
+			"trace-team",
+			"task-1",
+			"completed",
+			cleanupRoot,
+			{ PATH: "" },
+			claim.claim_token,
+			commandCompletionEvidence("trace-backed completion"),
+		);
+
+		const traceRead = (await executeGjcTeamApiOperation("read-traces", { team_name: "trace-team" }, cleanupRoot, {
+			PATH: "",
+		})) as {
+			traces: Array<{ event_type: string; source_event_id: string; evidence_refs?: string[] }>;
+		};
+		const completionTrace = traceRead.traces.find(trace => trace.event_type === "task_transitioned");
+		expect(completionTrace?.source_event_id).toBeTruthy();
+		expect(completionTrace?.evidence_refs).toContain("task:task-1:completion_evidence");
+		expect(await Bun.file(path.join(stateDir, "trace-errors.jsonl")).exists()).toBe(false);
+	});
+
 	it("stores structured completion evidence in task listings and honors claim tokens without implicit worker defaults", async () => {
 		cleanupRoot = await fs.mkdtemp(path.join(os.tmpdir(), "gjc-team-runtime-"));
 		await startGjcTeam({

@@ -358,6 +358,19 @@ export interface GjcTeamEvent {
 	message?: string;
 	data?: Record<string, unknown>;
 }
+export interface GjcTeamTraceEvent {
+	schema_version: 1;
+	trace_id: string;
+	span_id: string;
+	source_event_id: string;
+	event_type: string;
+	ts: string;
+	worker?: string;
+	task_id?: string;
+	message?: string;
+	evidence_refs?: string[];
+	data?: Record<string, unknown>;
+}
 interface WorkerStatusFile {
 	state: GjcWorkerStatusState;
 	current_task_id?: string;
@@ -454,6 +467,7 @@ export const GJC_TEAM_API_OPERATIONS = [
 	"write-worker-identity",
 	"append-event",
 	"read-events",
+	"read-traces",
 	"await-event",
 	"write-shutdown-request",
 	"read-shutdown-ack",
@@ -531,6 +545,14 @@ function workerDir(dir: string, worker: string): string {
 }
 function workerLifecyclePath(dir: string, worker: string): string {
 	return path.join(workerDir(dir, worker), "lifecycle.json");
+}
+
+function tracePath(dir: string): string {
+	return path.join(dir, "trace.jsonl");
+}
+
+function traceErrorPath(dir: string): string {
+	return path.join(dir, "trace-errors.jsonl");
 }
 function isSafeId(value: string): boolean {
 	return (
@@ -614,9 +636,52 @@ async function writeJsonFileNoClobber(filePath: string, value: unknown): Promise
 async function appendJsonl(filePath: string, value: unknown): Promise<void> {
 	await appendJsonlAudited(filePath, value, stateWriterOptions(filePath, "ledger", "append"));
 }
+function traceIdForTeam(dir: string): string {
+	return `trace-${stableHash(path.basename(dir))}`;
+}
+
+function evidenceRefsForEvent(event: GjcTeamEvent): string[] | undefined {
+	const refs: string[] = [];
+	if (event.task_id && event.type === "task_transitioned" && event.data && "completion_evidence" in event.data)
+		refs.push(`task:${event.task_id}:completion_evidence`);
+	if (event.task_id && event.type === "task_claim_recovered") refs.push(`task:${event.task_id}:claim_recovery`);
+	if (event.worker && event.type.startsWith("worker_")) refs.push(`worker:${event.worker}`);
+	return refs.length > 0 ? refs : undefined;
+}
+
+async function appendTraceForEvent(dir: string, event: GjcTeamEvent): Promise<void> {
+	const evidenceRefs = evidenceRefsForEvent(event);
+	const trace: GjcTeamTraceEvent = {
+		schema_version: 1,
+		trace_id: traceIdForTeam(dir),
+		span_id: `span-${stableHash(event.event_id)}`,
+		source_event_id: event.event_id,
+		event_type: event.type,
+		ts: event.ts,
+		...(event.worker ? { worker: event.worker } : {}),
+		...(event.task_id ? { task_id: event.task_id } : {}),
+		...(event.message ? { message: event.message } : {}),
+		...(event.data ? { data: event.data } : {}),
+		...(evidenceRefs ? { evidence_refs: evidenceRefs } : {}),
+	};
+	try {
+		await appendJsonl(tracePath(dir), trace);
+	} catch (error) {
+		try {
+			await appendJsonl(traceErrorPath(dir), {
+				ts: now(),
+				source_event_id: event.event_id,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		} catch {
+			// Trace append failure must not break legacy events.jsonl compatibility.
+		}
+	}
+}
 async function appendEvent(dir: string, event: Omit<GjcTeamEvent, "ts" | "event_id">): Promise<GjcTeamEvent> {
 	const full = { event_id: `evt-${Date.now()}-${Math.random().toString(16).slice(2)}`, ts: now(), ...event };
 	await appendJsonl(path.join(dir, "events.jsonl"), full);
+	await appendTraceForEvent(dir, full);
 	return full;
 }
 async function appendTelemetry(
@@ -3319,6 +3384,23 @@ export async function readGjcTeamEvents(
 		throw error;
 	}
 }
+export async function readGjcTeamTraces(
+	teamName: string,
+	cwd = process.cwd(),
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<GjcTeamTraceEvent[]> {
+	const dir = await findTeamDir(teamName, cwd, env);
+	try {
+		const text = await Bun.file(tracePath(dir)).text();
+		return text
+			.split(/\r?\n/)
+			.filter(Boolean)
+			.map(line => JSON.parse(line) as GjcTeamTraceEvent);
+	} catch (error) {
+		if (isEnoent(error)) return [];
+		throw error;
+	}
+}
 export async function appendGjcTeamEvent(
 	teamName: string,
 	type: string,
@@ -3627,6 +3709,8 @@ export async function executeGjcTeamApiOperation(
 			return appendGjcTeamEvent(teamName, String(input.type ?? "event"), worker, cwd, env);
 		case "read-events":
 			return { events: await readGjcTeamEvents(teamName, cwd, env) };
+		case "read-traces":
+			return { traces: await readGjcTeamTraces(teamName, cwd, env) };
 		case "await-event":
 			return awaitGjcTeamEvent(teamName, Number(input.timeout_ms ?? 0), cwd, env);
 		case "write-monitor-snapshot":

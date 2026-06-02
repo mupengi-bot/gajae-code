@@ -219,6 +219,8 @@ Semantics:
 - `.gjc/state/team/<team>/manifest.v2.json`
 - `.gjc/state/team/<team>/phase.json`
 - `.gjc/state/team/<team>/events.jsonl`
+- `.gjc/state/team/<team>/trace.jsonl`
+- `.gjc/state/team/<team>/trace-errors.jsonl`
 - `.gjc/state/team/<team>/telemetry.jsonl`
 - `.gjc/state/team/<team>/monitor-snapshot.json`
 - `.gjc/state/team/<team>/integration-report.md`
@@ -244,6 +246,7 @@ gjc team api claim-task --input '{"team_name":"my-team","worker_id":"worker-1"}'
 gjc team api transition-task-status --input '{"team_name":"my-team","task_id":"task-1","to":"completed","worker_id":"worker-1","claim_token":"<claim-token>","completion_evidence":{"summary":"done","items":[{"kind":"command","status":"passed","summary":"focused tests passed","command":"bun test packages/coding-agent/test/gjc-runtime/team-runtime.test.ts"}]}}' --json
 gjc team api update-worker-status --input '{"team_name":"my-team","worker_id":"worker-1","status":"working","current_task_id":"task-1"}' --json
 gjc team api recover-stale-claims --input '{"team_name":"my-team"}' --json
+gjc team api read-traces --input '{"team_name":"my-team"}' --json
 ```
 
 Canonical worker lifecycle operations:
@@ -256,6 +259,8 @@ Canonical worker lifecycle operations:
 - `release-task-claim`
 
 GJC-team interop operations are also available for mailbox, native notification, worker heartbeat/status, stale-claim recovery, startup ACK, events, monitor snapshots, approvals, and shutdown request/ack flows; run `gjc team api --help` for the full operation list.
+
+Structured trace records in `trace.jsonl` are append-only schema version 1 entries. Each trace references the legacy `events.jsonl` source via `source_event_id`, keeps `event_type`, worker/task ids, and includes `evidence_refs` for completion evidence or claim recovery when available. Trace append failures are isolated in `trace-errors.jsonl` and do not break `events.jsonl` compatibility.
 
 ## GJC-native concept parity
 
