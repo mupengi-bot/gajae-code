@@ -384,12 +384,17 @@ function dedupeVisibleBySkill(entries: SkillActiveEntry[]): SkillActiveEntry[] {
  * stage so the HUD reflects the single current workflow. `team` is intentionally
  * excluded — it runs alongside ultragoal — and every non-pipeline skill is left
  * untouched.
+ *
+ * This is a HUD-display policy only. It is applied by the skill HUD renderer and
+ * deliberately NOT folded into `readVisibleSkillActiveState`, whose callers (the
+ * deep-interview mutation guard and handoff caller inference) must keep seeing
+ * every genuinely-active skill rather than the single most-recent pipeline stage.
  */
 const PLANNING_PIPELINE_SKILLS = new Set<string>(["deep-interview", "ralplan", "ultragoal"]);
 
-function collapsePlanningPipeline(entries: SkillActiveEntry[]): SkillActiveEntry[] {
+export function collapsePlanningPipeline(entries: readonly SkillActiveEntry[]): SkillActiveEntry[] {
 	const pipeline = entries.filter(entry => PLANNING_PIPELINE_SKILLS.has(entry.skill));
-	if (pipeline.length <= 1) return entries;
+	if (pipeline.length <= 1) return [...entries];
 	let current = pipeline[0];
 	for (const entry of pipeline) {
 		if (entryRecency(entry) >= entryRecency(current)) current = entry;
@@ -409,8 +414,7 @@ function mergeVisibleEntries(
 	for (const entry of rawActiveEntries(sessionState)) {
 		merged.set(entryKey(entry), entry);
 	}
-	const active = dedupeVisibleBySkill([...merged.values()]).filter(entry => entry.active !== false);
-	return collapsePlanningPipeline(active);
+	return dedupeVisibleBySkill([...merged.values()]).filter(entry => entry.active !== false);
 }
 
 export async function readVisibleSkillActiveState(cwd: string, sessionId?: string): Promise<SkillActiveState | null> {

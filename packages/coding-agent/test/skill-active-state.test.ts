@@ -268,12 +268,13 @@ describe("GJC skill-active state", () => {
 		});
 	});
 
-	it("supersedes an upstream pipeline skill when a later stage is activated without a handoff verb", async () => {
+	it("keeps every active pipeline skill at the read layer (HUD pipeline collapse is render-only)", async () => {
 		await withTempCwd(async cwd => {
-			// `gjc ralplan` then `gjc ultragoal` each activate their own row; the
-			// ultragoal activation does not demote ralplan, so without the pipeline
-			// collapse the HUD would render ralplan + ultragoal. Only the current
-			// (most-recently-activated) stage should remain.
+			// `gjc ralplan` then `gjc ultragoal` each activate their own row without
+			// demoting the other. The shared read keeps both so blocking consumers
+			// (deep-interview mutation guard, handoff caller inference) still see the
+			// true active set; collapsing to the current stage is the HUD renderer's
+			// job, covered in skill-hud-bar.test.ts.
 			await syncSkillActiveState({
 				cwd,
 				skill: "ralplan",
@@ -292,29 +293,7 @@ describe("GJC skill-active state", () => {
 			});
 
 			const visible = await readVisibleSkillActiveState(cwd);
-			expect(visible?.active_skills?.map(entry => entry.skill)).toEqual(["ultragoal"]);
-		});
-	});
-
-	it("keeps team alongside ultragoal since team is not part of the planning pipeline", async () => {
-		await withTempCwd(async cwd => {
-			await syncSkillActiveState({
-				cwd,
-				skill: "ultragoal",
-				phase: "executing",
-				active: true,
-				nowIso: "2026-01-01T00:00:00.000Z",
-			});
-			await syncSkillActiveState({
-				cwd,
-				skill: "team",
-				phase: "running",
-				active: true,
-				nowIso: "2026-01-01T00:05:00.000Z",
-			});
-
-			const visible = await readVisibleSkillActiveState(cwd);
-			expect(visible?.active_skills?.map(entry => entry.skill).sort()).toEqual(["team", "ultragoal"]);
+			expect(visible?.active_skills?.map(entry => entry.skill).sort()).toEqual(["ralplan", "ultragoal"]);
 		});
 	});
 
