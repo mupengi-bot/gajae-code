@@ -13,13 +13,16 @@ import { existsSync } from "node:fs";
 import { Args, Command, Flags } from "@gajae-code/utils/cli";
 import { classifyRecovery } from "../harness-control-plane/classifier";
 import { callEndpoint, EndpointUnreachableError } from "../harness-control-plane/control-endpoint";
-import { resolveOwner } from "../harness-control-plane/owner";
+import type { FinalizeChecks } from "../harness-control-plane/finalize";
+import { RuntimeOwner, resolveOwner } from "../harness-control-plane/owner";
+import { GajaeCodeRpc, type HarnessRpc, type RpcStateSnapshot } from "../harness-control-plane/rpc-adapter";
 import { buildResponse, buildStateView } from "../harness-control-plane/state-machine";
 import {
 	generateSessionId,
 	readEvents,
 	readSessionState,
 	resolveHarnessRoot,
+	sessionPaths,
 	writeSessionState,
 } from "../harness-control-plane/storage";
 import {
@@ -162,6 +165,8 @@ export default class Harness extends Command {
 					return await this.#retire(root, input, flags.session);
 				case "finalize":
 					return await this.#finalizeVerb(root, input, flags.session);
+				case "__owner":
+					return await this.#runOwner(root, input, flags.session);
 				case "recover":
 				case "validate":
 				case "operate":
@@ -182,6 +187,99 @@ export default class Harness extends Command {
 		const state = await loadState(root, sessionId);
 		writeJson(buildResponse(state, false, { completed: false, reason: "owner-not-live" }, false));
 		process.exitCode = 1;
+	}
+
+	/** Detached owner daemon (spawned by `start --detach`). Runs until retired or signalled. */
+	async #runOwner(root: string, input: Record<string, unknown>, flagSession: string | undefined): Promise<void> {
+		const sessionId = requireSessionId(input, flagSession);
+		const useFake = process.env.GJC_HARNESS_OWNER_FAKE_RPC === "1";
+		const rpc: HarnessRpc = useFake
+			? this.#fakeRpc()
+			: new GajaeCodeRpc({ sessionDir: sessionPaths(root, sessionId).gjcSessionDir });
+		const finalizeChecks: FinalizeChecks | undefined = useFake ? this.#fakeChecks() : undefined;
+		const owner = new RuntimeOwner({
+			root,
+			sessionId,
+			rpc,
+			finalizeChecks,
+			validationCommands: useFake ? [{ name: "smoke", command: "true" }] : undefined,
+		});
+		const info = await owner.start();
+		writeJson({ ok: true, owner: info });
+		await new Promise<void>(resolve => {
+			const stop = (): void => {
+				clearInterval(timer);
+				resolve();
+			};
+			const timer = setInterval(async () => {
+				const resolved = await resolveOwner(root, sessionId);
+				if (!resolved.live) stop();
+			}, 500);
+			timer.unref?.();
+			process.on("SIGTERM", stop);
+			process.on("SIGINT", stop);
+		});
+		await owner.stop();
+		process.exit(0);
+	}
+
+	#fakeRpc(): HarnessRpc {
+		let cursor = 0;
+		const starts: number[] = [];
+		return {
+			async getState(): Promise<RpcStateSnapshot> {
+				return { isStreaming: false, steeringQueueDepth: 0, followupQueueDepth: 0 };
+			},
+			eventCursor: () => cursor,
+			async sendPrompt() {
+				cursor += 1;
+				starts.push(cursor);
+				return { commandId: "fake", ack: true };
+			},
+			async waitForAgentStart(after: number) {
+				const found = starts.find(c => c > after);
+				return found === undefined ? null : { cursor: found };
+			},
+			async close() {},
+		};
+	}
+
+	#fakeChecks(): FinalizeChecks {
+		return {
+			async runValidation(spec) {
+				return { exactCommand: spec.command, cwd: ".", exitStatus: 0, pass: true };
+			},
+			async resolveCommit() {
+				return "fakecommit";
+			},
+			async commitOnBranch() {
+				return true;
+			},
+			async prOrIssue() {
+				return { prUrl: "fake://pr/1", issueArtifact: null };
+			},
+		};
+	}
+
+	/** Spawn the detached owner daemon and poll until it holds the lease. */
+	async #spawnDetachedOwner(root: string, sessionId: string, cwd: string): Promise<boolean> {
+		const argv1 = process.argv[1];
+		const cmd = argv1
+			? [process.execPath, argv1, "harness", "__owner", "--session", sessionId]
+			: [process.execPath, "harness", "__owner", "--session", sessionId];
+		const child = Bun.spawn(cmd, {
+			cwd,
+			env: { ...process.env, GJC_HARNESS_STATE_ROOT: root },
+			stdout: "ignore",
+			stderr: "ignore",
+			stdin: "ignore",
+		});
+		child.unref();
+		for (let i = 0; i < 100; i++) {
+			if ((await resolveOwner(root, sessionId)).live) return true;
+			await new Promise(r => setTimeout(r, 50));
+		}
+		return false;
 	}
 
 	async #start(root: string, input: Record<string, unknown>): Promise<void> {
@@ -228,8 +326,26 @@ export default class Harness extends Command {
 			updatedAt: startedAt,
 		};
 		await writeSessionState(root, state);
-		const ownerLive = ownerLiveFor(state);
-		writeJson(buildResponse(state, ownerLive, { handle, ownerRuntime: "pending-m3" }));
+		let ownerLive = false;
+		if (input.detach === true) {
+			ownerLive = await this.#spawnDetachedOwner(root, sessionId, workspace);
+			if (ownerLive) {
+				const resolved = await resolveOwner(root, sessionId);
+				handle.processHandle = {
+					kind: "runtime-owner",
+					ownerId: resolved.lease?.ownerId ?? null,
+					pid: resolved.lease?.pid ?? null,
+				};
+				handle.ownerHandle = {
+					leasePath,
+					endpoint: resolved.socketPath,
+					heartbeatAt: resolved.lease?.heartbeatAt ?? null,
+				};
+				state.handle = handle;
+				await writeSessionState(root, state);
+			}
+		}
+		writeJson(buildResponse(state, ownerLive, { handle, ownerRuntime: ownerLive ? "detached" : "manual" }));
 	}
 
 	/** Returns true if a live owner handled the verb (response already printed). */
