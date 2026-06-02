@@ -327,8 +327,14 @@ export class RuntimeOwner {
 			finalizeChecks: this.#finalizeChecks ?? defaultFinalizeChecks(state.handle.workspace),
 			validationCommands: this.#validationCommands,
 			maxIterations: typeof input.maxIterations === "number" ? input.maxIterations : 5,
+			eventWriter: { ownerId: this.ownerId, leaseEpoch: this.#leaseEpoch },
 		});
+		// Persist the loop's terminal lifecycle/blockers so the response state is not stale.
 		state = await this.#loadState();
+		state.lifecycle = result.lifecycle;
+		state.blockers = result.blockers;
+		state.updatedAt = new Date(this.#opts.clock ? this.#opts.clock() : Date.now()).toISOString();
+		await writeSessionState(this.#opts.root, state);
 		return this.#response(state, { operate: result }, result.completed);
 	}
 

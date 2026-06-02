@@ -6,7 +6,7 @@ import { callEndpoint } from "../../src/harness-control-plane/control-endpoint";
 import type { FinalizeChecks } from "../../src/harness-control-plane/finalize";
 import { RuntimeOwner } from "../../src/harness-control-plane/owner";
 import type { HarnessRpc, RpcStateSnapshot } from "../../src/harness-control-plane/rpc-adapter";
-import { readReceiptIndex, writeSessionState } from "../../src/harness-control-plane/storage";
+import { readEvents, readReceiptIndex, writeSessionState } from "../../src/harness-control-plane/storage";
 import { SESSION_SCHEMA_VERSION, type SessionHandle, type SessionState } from "../../src/harness-control-plane/types";
 
 class FakeRpc implements HarnessRpc {
@@ -116,5 +116,11 @@ describe("owner-dispatched recover / validate / operate", () => {
 		expect(Array.isArray(operate.classifications)).toBe(true);
 		// git observer never reports completion here, so the bounded loop blocks rather than finalizing.
 		expect(operate.lifecycle).toBe("blocked");
+		// The owner persists the loop's terminal lifecycle (not stale).
+		expect((res.state as Record<string, unknown>).lifecycle).toBe("blocked");
+		// Every emitted event carries the owner's lease identity (no hardcoded "operate" writer).
+		const events = await readEvents(root, SID, 0);
+		expect(events.length).toBeGreaterThan(0);
+		expect(events.every(e => e.writer.ownerId === info.ownerId)).toBe(true);
 	});
 });

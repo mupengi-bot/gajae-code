@@ -48,6 +48,8 @@ export interface OperateOptions {
 	retryBudget?: Partial<RetryBudget>;
 	acceptanceTimeoutMs?: number;
 	maxIterations?: number;
+	/** Identity stamped on emitted events; the owner passes its lease identity so events stay single-writer-consistent. */
+	eventWriter?: { ownerId: string; leaseEpoch: number };
 	clock?: () => number;
 }
 
@@ -83,7 +85,7 @@ export async function operate(goal: string, opts: OperateOptions): Promise<Opera
 			state: { sessionId: opts.sessionId, lifecycle: "observing", harness: "gajae-code", ownerLive: true, blockers },
 			evidence,
 			nextAllowedActions: [],
-			writer: { ownerId: "operate", leaseEpoch: 0 },
+			writer: opts.eventWriter ?? { ownerId: "operate", leaseEpoch: 0 },
 		};
 		await appendEvent(opts.root, opts.sessionId, envelope);
 	};
