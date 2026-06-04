@@ -116,6 +116,7 @@ const ACTION_NAMES = new Set([
 	"gc",
 	"migrate",
 	"status",
+	"doctor",
 ]);
 const BOOLEAN_FLAGS = new Set([
 	"--json",
@@ -174,7 +175,18 @@ function assertKnownFlags(args: readonly string[], parsed: ParsedInvocation): vo
 }
 
 interface ParsedInvocation {
-	action: "read" | "write" | "clear" | "contract" | "handoff" | "graph" | "prune" | "gc" | "migrate" | "status";
+	action:
+		| "read"
+		| "write"
+		| "clear"
+		| "contract"
+		| "handoff"
+		| "graph"
+		| "prune"
+		| "gc"
+		| "migrate"
+		| "status"
+		| "doctor";
 	positionalSkill?: string;
 }
 
@@ -356,6 +368,282 @@ async function readJsonValue(filePath: string): Promise<unknown | null> {
 		if (err.code === "ENOENT") return null;
 		throw new StateCommandError(1, `failed to read ${filePath}: ${err.message}`);
 	}
+}
+
+type DoctorProblemType = "orphan_journal" | "checksum_mismatch" | "schema_violation" | "stale_active_state";
+
+interface DoctorProblem {
+	type: DoctorProblemType;
+	skill?: CanonicalGjcWorkflowSkill;
+	path: string;
+	message: string;
+	fixCommand: string;
+}
+
+interface DoctorSummary {
+	ok: boolean;
+	root: string;
+	summary: {
+		skills_scanned: number;
+		files_scanned: number;
+		journals_scanned: number;
+		findings_total: number;
+		by_kind: Record<DoctorProblemType, number>;
+	};
+	problems: DoctorProblem[];
+}
+
+async function readRawJson(filePath: string): Promise<{ exists: boolean; value?: unknown; error?: string }> {
+	try {
+		return { exists: true, value: JSON.parse(await fs.readFile(filePath, "utf-8")) };
+	} catch (error) {
+		const err = error as NodeJS.ErrnoException;
+		if (err.code === "ENOENT") return { exists: false };
+		return { exists: true, error: err.message };
+	}
+}
+
+async function listJsonFiles(dir: string): Promise<string[]> {
+	let entries: string[];
+	try {
+		entries = await fs.readdir(dir);
+	} catch (error) {
+		const err = error as NodeJS.ErrnoException;
+		if (err.code === "ENOENT") return [];
+		throw error;
+	}
+	return entries
+		.filter(entry => entry.endsWith(".json"))
+		.sort()
+		.map(entry => path.join(dir, entry));
+}
+
+function doctorProblem(
+	type: DoctorProblemType,
+	pathValue: string,
+	message: string,
+	fixCommand: string,
+	skill?: CanonicalGjcWorkflowSkill,
+): DoctorProblem {
+	return skill
+		? { type, skill, path: pathValue, message, fixCommand }
+		: { type, path: pathValue, message, fixCommand };
+}
+
+function activeEntryDir(cwd: string, sessionId: string | undefined): string {
+	return path.join(stateDirFor(cwd, sessionId), "active");
+}
+
+function skillFromActiveValue(value: unknown): string | undefined {
+	return isPlainObject(value) && typeof value.skill === "string" ? value.skill : undefined;
+}
+
+function activeFlag(value: unknown): boolean {
+	return isPlainObject(value) && value.active !== false;
+}
+
+async function collectDoctorSummary(
+	cwd: string,
+	skill: CanonicalGjcWorkflowSkill | undefined,
+	sessionId: string | undefined,
+): Promise<DoctorSummary> {
+	const root = path.join(cwd, ".gjc", "state");
+	const skills = skill ? [skill] : [...CANONICAL_GJC_WORKFLOW_SKILLS];
+	const problems: DoctorProblem[] = [];
+	let filesScanned = 0;
+	let journalsScanned = 0;
+
+	for (const currentSkill of skills) {
+		const filePath = modeStateFile(cwd, currentSkill, sessionId);
+		const raw = await readRawJson(filePath);
+		if (!raw.exists) continue;
+		filesScanned += 1;
+		if (raw.error) {
+			problems.push(
+				doctorProblem(
+					"schema_violation",
+					filePath,
+					`mode-state JSON is unreadable: ${raw.error}`,
+					`gjc state ${currentSkill} migrate`,
+					currentSkill,
+				),
+			);
+			continue;
+		}
+		const validation = validateWorkflowStateEnvelope(currentSkill, raw.value);
+		if (!validation.valid) {
+			problems.push(
+				doctorProblem(
+					"schema_violation",
+					filePath,
+					validation.error ?? `invalid ${currentSkill} state envelope`,
+					`gjc state ${currentSkill} migrate`,
+					currentSkill,
+				),
+			);
+		}
+		const mismatch = await detectWorkflowEnvelopeIntegrityMismatch(filePath);
+		if (mismatch) {
+			problems.push(
+				doctorProblem(
+					"checksum_mismatch",
+					filePath,
+					`expected sha256 ${mismatch.expected} but found ${mismatch.actual}`,
+					`gjc state ${currentSkill} migrate`,
+					currentSkill,
+				),
+			);
+		}
+	}
+
+	const journalFiles = await listJsonFiles(path.join(root, "transactions"));
+	for (const journalPath of journalFiles) {
+		journalsScanned += 1;
+		const raw = await readRawJson(journalPath);
+		const value = raw.value;
+		const status = isPlainObject(value) && typeof value.status === "string" ? value.status : undefined;
+		const paths =
+			isPlainObject(value) && Array.isArray(value.paths) ? value.paths.filter(p => typeof p === "string") : [];
+		const hasLiveMutation = status === "pending" && paths.some(filePath => path.resolve(filePath).startsWith(root));
+		if (!hasLiveMutation) {
+			problems.push(
+				doctorProblem(
+					"orphan_journal",
+					journalPath,
+					"transaction journal has no matching live mutation",
+					"gjc state prune --hard",
+				),
+			);
+		}
+	}
+
+	const inspectActiveScope = async (scopeSessionId: string | undefined): Promise<void> => {
+		const snapshotPath = activeStateFile(cwd, scopeSessionId);
+		const snapshot = await readRawJson(snapshotPath);
+		if (snapshot.exists) filesScanned += 1;
+		const entryFiles = await listJsonFiles(activeEntryDir(cwd, scopeSessionId));
+		const entrySkills = new Set<string>();
+		for (const entryPath of entryFiles) {
+			filesScanned += 1;
+			const entry = await readRawJson(entryPath);
+			const entrySkill = skillFromActiveValue(entry.value) ?? path.basename(entryPath, ".json");
+			entrySkills.add(entrySkill);
+			const canonical = canonicalWorkflowSkill(entrySkill);
+			if (canonical && !skills.includes(canonical)) continue;
+			const statePath = canonical
+				? modeStateFile(cwd, canonical, scopeSessionId)
+				: path.join(root, `${entrySkill}-state.json`);
+			const state = await readRawJson(statePath);
+			if (activeFlag(entry.value) && (!state.exists || !activeFlag(state.value))) {
+				problems.push(
+					doctorProblem(
+						"stale_active_state",
+						entryPath,
+						`active entry for ${entrySkill} does not match a live active mode-state`,
+						canonical ? `gjc state ${canonical} clear` : "gjc state prune --hard",
+						canonical ?? undefined,
+					),
+				);
+			}
+		}
+		if (isPlainObject(snapshot.value)) {
+			const activeSkills = Array.isArray(snapshot.value.active_skills) ? snapshot.value.active_skills : [];
+			for (const entry of activeSkills) {
+				const entrySkill = skillFromActiveValue(entry);
+				if (!entrySkill) continue;
+				const canonical = canonicalWorkflowSkill(entrySkill);
+				if (canonical && !skills.includes(canonical)) continue;
+				if (activeFlag(entry) && !entrySkills.has(entrySkill)) {
+					problems.push(
+						doctorProblem(
+							"stale_active_state",
+							snapshotPath,
+							`active snapshot lists ${entrySkill} but no raw per-skill active entry exists`,
+							canonical ? `gjc state ${canonical} clear` : "gjc state prune --hard",
+							canonical ?? undefined,
+						),
+					);
+				}
+			}
+		}
+	};
+
+	await inspectActiveScope(sessionId);
+	if (!sessionId) {
+		const sessionsDir = path.join(root, "sessions");
+		let sessions: string[] = [];
+		try {
+			const entries = await fs.readdir(sessionsDir, { withFileTypes: true });
+			sessions = entries
+				.filter(entry => entry.isDirectory())
+				.map(entry => entry.name)
+				.sort();
+		} catch (error) {
+			const err = error as NodeJS.ErrnoException;
+			if (err.code !== "ENOENT") throw error;
+		}
+		for (const rawSession of sessions) await inspectActiveScope(decodeURIComponent(rawSession));
+	}
+
+	problems.sort(
+		(a, b) =>
+			a.type.localeCompare(b.type) || (a.skill ?? "").localeCompare(b.skill ?? "") || a.path.localeCompare(b.path),
+	);
+	const byKind: Record<DoctorProblemType, number> = {
+		orphan_journal: 0,
+		checksum_mismatch: 0,
+		schema_violation: 0,
+		stale_active_state: 0,
+	};
+	for (const problem of problems) byKind[problem.type] += 1;
+	return {
+		ok: problems.length === 0,
+		root,
+		summary: {
+			skills_scanned: skills.length,
+			files_scanned: filesScanned,
+			journals_scanned: journalsScanned,
+			findings_total: problems.length,
+			by_kind: byKind,
+		},
+		problems,
+	};
+}
+
+function renderDoctorText(summary: DoctorSummary): string {
+	const lines = [
+		`ok: ${summary.ok}`,
+		`root: ${summary.root}`,
+		`skills_scanned: ${summary.summary.skills_scanned}`,
+		`files_scanned: ${summary.summary.files_scanned}`,
+		`journals_scanned: ${summary.summary.journals_scanned}`,
+		`findings_total: ${summary.summary.findings_total}`,
+		`counts: ${Object.entries(summary.summary.by_kind)
+			.map(([kind, count]) => `${kind}=${count}`)
+			.join(", ")}`,
+	];
+	for (const problem of summary.problems) {
+		lines.push(
+			`finding: kind=${problem.type} skill=${problem.skill ?? "-"} path=${problem.path} message=${problem.message} fix=${problem.fixCommand}`,
+		);
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+async function handleDoctor(
+	args: readonly string[],
+	cwd: string,
+	positionalSkill: string | undefined,
+): Promise<StateCommandResult> {
+	const rawSkill = flagValue(args, "--skill")?.trim() || flagValue(args, "--mode")?.trim() || positionalSkill?.trim();
+	if (rawSkill) assertKnownMode(rawSkill);
+	const sessionId = flagValue(args, "--session-id")?.trim() || undefined;
+	if (sessionId) assertSafePathComponent(sessionId, "session-id");
+	const summary = await collectDoctorSummary(cwd, rawSkill as CanonicalGjcWorkflowSkill | undefined, sessionId);
+	return {
+		status: summary.ok ? 0 : 1,
+		stdout: hasFlag(args, "--json") ? `${JSON.stringify(summary, null, 2)}\n` : renderDoctorText(summary),
+	};
 }
 
 async function warnAndAuditOutOfBandIfNeeded(
@@ -1424,6 +1712,8 @@ export async function runNativeStateCommand(args: string[], cwd = process.cwd())
 				return await handleContract(args, cwd, parsed.positionalSkill);
 			case "status":
 				return await handleStatus(args, cwd, parsed.positionalSkill);
+			case "doctor":
+				return await handleDoctor(args, cwd, parsed.positionalSkill);
 			case "handoff":
 				return await handleHandoff(args, cwd, parsed.positionalSkill);
 			case "graph":

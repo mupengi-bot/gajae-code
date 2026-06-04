@@ -12,6 +12,7 @@ export default class State extends Command {
 		'$ gjc state ralplan write --input \'{"phase":"approval","active":true}\' --json',
 		"$ gjc state team contract",
 		"$ gjc state deep-interview handoff --to ralplan --json",
+		"$ gjc state doctor --skill ralplan --json",
 	];
 
 	async run(): Promise<void> {

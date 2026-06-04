@@ -75,6 +75,33 @@ jobs:
               fi
               echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
 
+   # Branch protection must add the always-present `gjc-state-gates` status as required.
+   gjc-state-gates:
+      name: gjc-state-gates
+      runs-on: [self-hosted, Linux, X64, gajae-layofflabs-2]
+      timeout-minutes: 15
+      env:
+         GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+         GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      steps:
+         - uses: actions/checkout@v4
+           with:
+              fetch-depth: 0
+         - uses: actions/setup-node@v4
+           with:
+              node-version: "24"
+         - uses: oven-sh/setup-bun@v2
+           with:
+              bun-version: "1.3"
+         - name: Cache bun dependencies
+           uses: actions/cache@v4
+           with:
+              path: ~/.bun/install/cache
+              key: bun-${{ runner.os }}-${{ hashFiles('**/bun.lock') }}
+         - run: bun install --frozen-lockfile
+         - name: Run GJC state gates
+           run: bun scripts/ci-gjc-state-gates.ts
+
    # Fast lint + type check (no Rust, no native build needed)
    check:
       if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
