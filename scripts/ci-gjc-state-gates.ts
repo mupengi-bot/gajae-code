@@ -31,7 +31,10 @@ const boundedGateCommands = [
 	["bun", "scripts/verify-gjc-skill-docs.ts", "--fail"],
 	["bun", "test", "packages/coding-agent/test/gjc-runtime/state-schema.test.ts"],
 	["bun", "test", "packages/coding-agent/test/gjc-runtime/state-migrations.test.ts"],
-	["bun", "test", "packages/coding-agent/test/gjc-runtime/state-writer-drift.test.ts"],
+	// NOTE: state-writer-drift.test.ts imports recordSkillActivation (hooks) and
+	// persistGjcTeamModeStateSummary (team-runtime), which load the @gajae-code/natives
+	// addon transitively, so it runs in the heavier "Affected path validation" job, not
+	// this native-free gate.
 	["bun", "test", "packages/coding-agent/test/gjc-runtime/state-schema-corpus.test.ts"],
 	["bun", "test", "packages/coding-agent/test/gjc-runtime/state-runtime.test.ts"],
 	["bun", "test", "packages/coding-agent/test/gjc-runtime/state-handoff.test.ts"],
