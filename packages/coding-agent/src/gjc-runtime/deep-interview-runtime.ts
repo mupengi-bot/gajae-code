@@ -5,9 +5,10 @@ import * as path from "node:path";
 import { Settings } from "../config/settings";
 import { syncSkillActiveState } from "../skill-state/active-state";
 import { buildDeepInterviewHudSummary } from "../skill-state/workflow-hud";
+import { WORKFLOW_STATE_VERSION } from "../skill-state/workflow-state-contract";
 import { runNativeRalplanCommand } from "./ralplan-runtime";
 import { runNativeStateCommand } from "./state-runtime";
-import { appendJsonl, writeArtifact, writeJsonAtomic } from "./state-writer";
+import { appendJsonl, writeArtifact, writeWorkflowEnvelopeAtomic } from "./state-writer";
 
 /**
  * Native implementation of `gjc deep-interview`.
@@ -412,7 +413,7 @@ export async function persistDeepInterviewSpec(
 		active: true,
 		current_phase: "handoff",
 		skill: "deep-interview",
-		version: typeof existing.version === "number" ? existing.version : 1,
+		version: WORKFLOW_STATE_VERSION,
 		spec_slug: resolved.slug,
 		spec_path: specPath,
 		spec_sha256: sha256,
@@ -421,8 +422,16 @@ export async function persistDeepInterviewSpec(
 		updated_at: createdAt,
 	};
 	if (resolved.sessionId) payload.session_id = resolved.sessionId;
-	await writeJsonAtomic(statePath, payload, {
+	await writeWorkflowEnvelopeAtomic(statePath, payload, {
 		cwd,
+		receipt: {
+			cwd,
+			skill: "deep-interview",
+			owner: "gjc-runtime",
+			command: "gjc deep-interview persist-spec-state",
+			sessionId: resolved.sessionId,
+			nowIso: createdAt,
+		},
 		audit: { category: "state", verb: "write", owner: "gjc-runtime", skill: "deep-interview" },
 	});
 	await syncDeepInterviewHud({
@@ -449,6 +458,7 @@ async function seedDeepInterviewState(cwd: string, resolved: ResolvedDeepIntervi
 		active: true,
 		current_phase: "interviewing",
 		skill: "deep-interview",
+		version: WORKFLOW_STATE_VERSION,
 		resolution: resolved.resolution,
 		threshold: resolved.threshold,
 		threshold_source: resolved.thresholdSource,
@@ -466,8 +476,16 @@ async function seedDeepInterviewState(cwd: string, resolved: ResolvedDeepIntervi
 		(payload.state as Record<string, unknown>).language = resolved.language;
 	}
 	if (resolved.sessionId) payload.session_id = resolved.sessionId;
-	await writeJsonAtomic(statePath, payload, {
+	await writeWorkflowEnvelopeAtomic(statePath, payload, {
 		cwd,
+		receipt: {
+			cwd,
+			skill: "deep-interview",
+			owner: "gjc-runtime",
+			command: "gjc deep-interview seed",
+			sessionId: resolved.sessionId,
+			nowIso: now,
+		},
 		audit: { category: "state", verb: "write", owner: "gjc-runtime", skill: "deep-interview" },
 	});
 	return statePath;

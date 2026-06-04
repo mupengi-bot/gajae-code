@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { WorkflowHudSummary } from "../skill-state/active-state";
 import { buildTeamHudSummary as buildWorkflowTeamHudSummary } from "../skill-state/workflow-hud";
+import { WORKFLOW_STATE_VERSION } from "../skill-state/workflow-state-contract";
 
 import { applyGjcTmuxProfile } from "./launch-tmux";
 import {
@@ -14,6 +15,7 @@ import {
 	removeFileAudited,
 	writeJsonAtomic,
 	writeReport,
+	writeWorkflowEnvelopeAtomic,
 } from "./state-writer";
 import { GJC_TMUX_PROFILE_OPTION, GJC_TMUX_PROFILE_VALUE } from "./tmux-common";
 
@@ -1000,11 +1002,11 @@ function teamModeStatePath(): string {
 export async function persistGjcTeamModeStateSummary(snapshot: GjcTeamSnapshot, cwd = process.cwd()): Promise<void> {
 	const active = snapshot.phase !== "complete" && snapshot.phase !== "cancelled";
 	const updatedAt = now();
-	await writeJsonAtomic(
+	await writeWorkflowEnvelopeAtomic(
 		teamModeStatePath(),
 		{
 			skill: "team",
-			version: 1,
+			version: WORKFLOW_STATE_VERSION,
 			active,
 			current_phase: snapshot.phase,
 			team_name: snapshot.team_name,

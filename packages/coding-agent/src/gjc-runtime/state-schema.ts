@@ -12,7 +12,7 @@
  */
 import * as fs from "node:fs/promises";
 import { z } from "zod";
-import { CANONICAL_GJC_WORKFLOW_SKILLS } from "../skill-state/active-state";
+const CANONICAL_GJC_WORKFLOW_SKILLS = ["deep-interview", "ralplan", "ultragoal", "team"] as const;
 
 const skillEnum = z.enum([...CANONICAL_GJC_WORKFLOW_SKILLS]);
 const ownerEnum = z.enum(["gjc-state-cli", "gjc-runtime", "gjc-hook"]);

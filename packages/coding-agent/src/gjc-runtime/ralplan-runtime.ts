@@ -3,9 +3,10 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { syncSkillActiveState } from "../skill-state/active-state";
 import { buildRalplanHudSummary } from "../skill-state/workflow-hud";
+import { WORKFLOW_STATE_VERSION } from "../skill-state/workflow-state-contract";
 import { renderCliWriteReceipt } from "./cli-write-receipt";
 import { isRestrictedRoleAgentBash } from "./restricted-role-agent-bash";
-import { appendJsonl, writeArtifact, writeJsonAtomic } from "./state-writer";
+import { appendJsonl, writeArtifact, writeWorkflowEnvelopeAtomic } from "./state-writer";
 
 /**
  * Native implementation of `gjc ralplan`.
@@ -191,9 +192,12 @@ async function persistActiveRunId(cwd: string, sessionId: string | undefined, ru
 	existing.run_id = runId;
 	if (typeof existing.skill !== "string") existing.skill = "ralplan";
 	if (typeof existing.active !== "boolean") existing.active = true;
+	if (typeof existing.current_phase !== "string") existing.current_phase = "planner";
+	if (typeof existing.version !== "number") existing.version = WORKFLOW_STATE_VERSION;
 	existing.updated_at = new Date().toISOString();
-	await writeJsonAtomic(statePath, existing, {
+	await writeWorkflowEnvelopeAtomic(statePath, existing, {
 		cwd,
+		receipt: { cwd, skill: "ralplan", owner: "gjc-runtime", command: "gjc ralplan persist-run-id", sessionId },
 		audit: { category: "state", verb: "write", owner: "gjc-runtime", skill: "ralplan" },
 	});
 }
@@ -336,9 +340,12 @@ async function applyPlannerStateUpdate(
 	Object.assign(existing, plannerStatePayload(update));
 	if (typeof existing.skill !== "string") existing.skill = "ralplan";
 	if (typeof existing.active !== "boolean") existing.active = true;
+	if (typeof existing.current_phase !== "string") existing.current_phase = "planner";
+	if (typeof existing.version !== "number") existing.version = WORKFLOW_STATE_VERSION;
 	existing.updated_at = new Date().toISOString();
-	await writeJsonAtomic(statePath, existing, {
+	await writeWorkflowEnvelopeAtomic(statePath, existing, {
 		cwd,
+		receipt: { cwd, skill: "ralplan", owner: "gjc-runtime", command: "gjc ralplan planner-state", sessionId },
 		audit: { category: "state", verb: "write", owner: "gjc-runtime", skill: "ralplan" },
 	});
 }
@@ -574,6 +581,7 @@ async function seedRalplanState(
 		active: true,
 		current_phase: "planner",
 		skill: "ralplan",
+		version: WORKFLOW_STATE_VERSION,
 		mode: resolved.deliberate ? "deliberate" : "short",
 		interactive: resolved.interactive,
 		task: resolved.task,
@@ -583,8 +591,9 @@ async function seedRalplanState(
 	if (resolved.architectKind) payload.architect_kind = resolved.architectKind;
 	if (resolved.criticKind) payload.critic_kind = resolved.criticKind;
 	if (resolved.sessionId) payload.session_id = resolved.sessionId;
-	await writeJsonAtomic(statePath, payload, {
+	await writeWorkflowEnvelopeAtomic(statePath, payload, {
 		cwd,
+		receipt: { cwd, skill: "ralplan", owner: "gjc-runtime", command: "gjc ralplan seed", sessionId: resolved.sessionId },
 		audit: { category: "state", verb: "write", owner: "gjc-runtime", skill: "ralplan" },
 	});
 	return { statePath, runId };

@@ -22,6 +22,7 @@ import {
 	canonicalWorkflowSkill,
 	describeWorkflowStateContract,
 	type WorkflowStateReceipt,
+	WORKFLOW_STATE_VERSION,
 } from "../skill-state/workflow-state-contract";
 import { renderCliWriteReceipt } from "./cli-write-receipt";
 import { renderStateGraph, type StateGraphFormat } from "./state-graph";
@@ -1090,7 +1091,7 @@ async function handleWrite(
 		merged.current_phase =
 			typeof existingPayload.current_phase === "string" ? existingPayload.current_phase : "active";
 	}
-	if (typeof merged.version !== "number") merged.version = 1;
+	merged.version = WORKFLOW_STATE_VERSION;
 	if (typeof merged.active !== "boolean") merged.active = true;
 	merged.updated_at = nowIsoStr;
 	merged.receipt = receipt;
@@ -1161,6 +1162,7 @@ async function handleClear(
 		active: false,
 		current_phase: "complete",
 		updated_at: clearedAt,
+		version: WORKFLOW_STATE_VERSION,
 	};
 	const mutationId = `${mode}:clear:${clearedAt}`;
 	const receipt = buildWorkflowStateReceipt({

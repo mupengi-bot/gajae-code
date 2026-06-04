@@ -140,6 +140,7 @@ export function normalizeLegacyState(raw: Record<string, unknown>, skill: string
 	state.skill = canonicalSkill;
 	if (typeof state.version !== "number") state.version = 1;
 	if (typeof state.active !== "boolean") state.active = true;
+	if (typeof state.updated_at !== "string") state.updated_at = new Date().toISOString();
 	state.receipt = receiptWithRequiredFields(state.receipt, canonicalSkill);
 
 	const migrated = migrateWorkflowState(state, canonicalSkill).state;
