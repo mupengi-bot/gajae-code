@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { syncSkillActiveState } from "../skill-state/active-state";
 import { buildRalplanHudSummary } from "../skill-state/workflow-hud";
+import { renderCliWriteReceipt } from "./cli-write-receipt";
 import { isRestrictedRoleAgentBash } from "./restricted-role-agent-bash";
 import { appendJsonl, writeArtifact, writeJsonAtomic } from "./state-writer";
 
@@ -608,20 +609,16 @@ async function handleConsensusHandoff(args: readonly string[], cwd: string): Pro
 	const summary = {
 		skill: "ralplan",
 		mode,
-		interactive: resolved.interactive,
-		architect: resolved.architectKind ?? "default",
-		critic: resolved.criticKind ?? "default",
-		task: resolved.task,
 		state_path: statePath,
 		run_id: runId,
 		handoff: "/skill:ralplan",
 	};
 	const stdout = resolved.json
-		? `${JSON.stringify(summary)}\n`
+		? renderCliWriteReceipt({ ok: true, ...summary })
 		: [
 				`ralplan seed run_id=${runId}`,
 				`state_path=${statePath}`,
-				`mode=${mode} interactive=${resolved.interactive} architect=${summary.architect} critic=${summary.critic}`,
+				`mode=${mode} interactive=${resolved.interactive} architect=${resolved.architectKind ?? "default"} critic=${resolved.criticKind ?? "default"}`,
 				"handoff=/skill:ralplan",
 				"",
 			].join("\n");

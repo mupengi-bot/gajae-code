@@ -117,9 +117,12 @@ describe("native gjc state runtime", () => {
 		);
 
 		expect(second.status).toBe(0);
-		const merged = envelopeState(second.stdout);
-		expect(merged.active).toBe(true);
-		expect(merged.current_phase).toBe("interviewing");
+		const receipt = parseStdout(second.stdout);
+		expect(receipt).toMatchObject({ ok: true, skill: "deep-interview", active: true, current_phase: "interviewing" });
+		expect(receipt.state).toBeUndefined();
+		const merged = JSON.parse(
+			await fs.readFile(path.join(root, ".gjc", "state", "deep-interview-state.json"), "utf-8"),
+		);
 		expect(merged.current_ambiguity).toBe(0.5);
 		expect(merged.threshold_source).toBe("user");
 		expect(merged.interview_id).toBe("abc");
@@ -138,7 +141,12 @@ describe("native gjc state runtime", () => {
 		);
 
 		expect(result.status).toBe(0);
-		const merged = envelopeState(result.stdout);
+		const receipt = parseStdout(result.stdout);
+		expect(receipt).toMatchObject({ ok: true, skill: "deep-interview", active: true });
+		expect(receipt.state).toBeUndefined();
+		const merged = JSON.parse(
+			await fs.readFile(path.join(root, ".gjc", "state", "deep-interview-state.json"), "utf-8"),
+		);
 		expect(merged.active).toBe(true);
 		expect(Object.hasOwn(merged, "drop_me")).toBe(false);
 	});
@@ -156,7 +164,12 @@ describe("native gjc state runtime", () => {
 		);
 
 		expect(result.status).toBe(0);
-		const replaced = envelopeState(result.stdout);
+		const receipt = parseStdout(result.stdout);
+		expect(receipt).toMatchObject({ ok: true, skill: "deep-interview", active: false });
+		expect(receipt.state).toBeUndefined();
+		const replaced = JSON.parse(
+			await fs.readFile(path.join(root, ".gjc", "state", "deep-interview-state.json"), "utf-8"),
+		);
 		expect(replaced.active).toBe(false);
 		expect(Object.hasOwn(replaced, "keep_me")).toBe(false);
 	});
@@ -172,7 +185,11 @@ describe("native gjc state runtime", () => {
 		);
 
 		expect(result.status).toBe(0);
-		expect(envelopeState(result.stdout).current_phase).toBe("interviewing");
+		expect(parseStdout(result.stdout)).toMatchObject({
+			ok: true,
+			skill: "deep-interview",
+			current_phase: "interviewing",
+		});
 	});
 
 	it("clear flips active:false and removes the entry from skill-active-state", async () => {
@@ -202,9 +219,14 @@ describe("native gjc state runtime", () => {
 		const result = await runNativeStateCommand(["clear", "--mode", "deep-interview"], root);
 
 		expect(result.status).toBe(0);
-		const cleared = envelopeState(result.stdout);
-		expect(cleared.active).toBe(false);
-		expect(cleared.current_phase).toBe("complete");
+		const cleared = parseStdout(result.stdout);
+		expect(cleared).toMatchObject({
+			ok: true,
+			skill: "deep-interview",
+			active: false,
+			current_phase: "complete",
+		});
+		expect(cleared.state).toBeUndefined();
 
 		const rootActive = JSON.parse(await fs.readFile(path.join(activeStateDir, "skill-active-state.json"), "utf-8"));
 		expect(rootActive.active_skills).toEqual([]);
@@ -365,9 +387,9 @@ describe("native gjc state runtime", () => {
 		);
 
 		expect(result.status).toBe(0);
-		const parsed = JSON.parse(result.stdout ?? "{}") as { skill?: string; state?: { current_phase?: string } };
-		expect(parsed.skill).toBe("ralplan");
-		expect(parsed.state?.current_phase).toBe("approval");
+		const parsed = JSON.parse(result.stdout ?? "{}") as Record<string, unknown>;
+		expect(parsed).toMatchObject({ ok: true, skill: "ralplan", current_phase: "approval" });
+		expect(parsed.state).toBeUndefined();
 		const onDisk = JSON.parse(await fs.readFile(path.join(stateDir, "ralplan-state.json"), "utf-8"));
 		expect(onDisk.current_phase).toBe("approval");
 	});

@@ -2,6 +2,7 @@ import * as crypto from "node:crypto";
 import * as path from "node:path";
 import type { WorkflowHudSummary } from "../skill-state/active-state";
 import { buildUltragoalHudSummary as buildWorkflowUltragoalHudSummary } from "../skill-state/workflow-hud";
+import { renderCliWriteReceipt } from "./cli-write-receipt";
 import { DEFAULT_ULTRAGOAL_OBJECTIVE } from "./goal-mode-request";
 import { renderUltragoalStatusMarkdown } from "./state-renderer";
 import { appendJsonl, writeArtifact, writeJsonAtomic } from "./state-writer";
@@ -1235,8 +1236,19 @@ function renderStatus(summary: UltragoalStatusSummary, json: boolean): string {
 function renderCompleteHandoff(
 	result: { plan: UltragoalPlan; goal?: UltragoalGoal; allComplete: boolean },
 	json: boolean,
+	cwd: string,
 ): string {
-	if (json) return `${JSON.stringify(result)}\n`;
+	if (json) {
+		return renderCliWriteReceipt({
+			ok: true,
+			all_complete: result.allComplete,
+			next_action: result.allComplete ? "none" : "execute-goal",
+			goal_id: result.goal?.id,
+			goal_status: result.goal?.status,
+			gjc_objective: result.plan.gjcObjective,
+			goals_path: getUltragoalPaths(cwd).goalsPath,
+		});
+	}
 	if (result.allComplete) return "ultragoal complete all=true\n";
 	if (!result.goal) return "ultragoal next-action=none\n";
 	return [
@@ -1263,7 +1275,12 @@ export async function runNativeUltragoalCommand(args: string[], cwd = process.cw
 					status: 0,
 					createdPlan: true,
 					stdout: json
-						? `${JSON.stringify(plan, null, 2)}\n`
+						? renderCliWriteReceipt({
+								ok: true,
+								goals_count: plan.goals.length,
+								goal_ids: plan.goals.map(goal => goal.id),
+								goals_path: getUltragoalPaths(cwd).goalsPath,
+							})
 						: `Created ultragoal plan with ${plan.goals.length} goal at ${getUltragoalPaths(cwd).goalsPath}.\n`,
 				};
 			}
@@ -1273,6 +1290,7 @@ export async function runNativeUltragoalCommand(args: string[], cwd = process.cw
 					stdout: renderCompleteHandoff(
 						await startNextUltragoalGoal({ cwd, retryFailed: hasFlag(args, "--retry-failed") }),
 						json,
+						cwd,
 					),
 				};
 			case "checkpoint": {
@@ -1287,9 +1305,19 @@ export async function runNativeUltragoalCommand(args: string[], cwd = process.cw
 					gjcGoalJson: flagValue(args, "--gjc-goal-json"),
 					qualityGateJson: flagValue(args, "--quality-gate-json"),
 				});
+				const goal = plan.goals.find(item => item.id === goalId);
 				return {
 					status: 0,
-					stdout: json ? `${JSON.stringify(plan)}\n` : `ultragoal checkpoint goal-id=${goalId} status=${status}\n`,
+					stdout: json
+						? renderCliWriteReceipt({
+								ok: true,
+								goal_id: goalId,
+								status,
+								goals_path: getUltragoalPaths(cwd).goalsPath,
+								completion_receipt_kind: goal?.completionVerification?.receiptKind,
+								quality_gate_hash: goal?.completionVerification?.qualityGateHash,
+							})
+						: `ultragoal checkpoint goal-id=${goalId} status=${status}\n`,
 				};
 			}
 			case "steer": {
@@ -1302,9 +1330,17 @@ export async function runNativeUltragoalCommand(args: string[], cwd = process.cw
 					evidence: flagValue(args, "--evidence") ?? "",
 					rationale: flagValue(args, "--rationale") ?? "",
 				});
+				const goal = plan.goals.at(-1);
 				return {
 					status: 0,
-					stdout: json ? `${JSON.stringify(plan, null, 2)}\n` : "Accepted add_subgoal steering.\n",
+					stdout: json
+						? renderCliWriteReceipt({
+								ok: true,
+								kind,
+								goal_id: goal?.id,
+								goals_path: getUltragoalPaths(cwd).goalsPath,
+							})
+						: "Accepted add_subgoal steering.\n",
 				};
 			}
 			case "record-review-blockers": {
@@ -1316,7 +1352,13 @@ export async function runNativeUltragoalCommand(args: string[], cwd = process.cw
 					evidence: flagValue(args, "--evidence") ?? "",
 					gjcGoalJson: flagValue(args, "--gjc-goal-json"),
 				});
-				return { status: 0, stdout: json ? `${JSON.stringify(plan, null, 2)}\n` : "Recorded review blockers.\n" };
+				const goal = plan.goals.at(-1);
+				return {
+					status: 0,
+					stdout: json
+						? renderCliWriteReceipt({ ok: true, goal_id: goal?.id, goals_path: getUltragoalPaths(cwd).goalsPath })
+						: "Recorded review blockers.\n",
+				};
 			}
 			default:
 				return { status: 1, stderr: `Unknown gjc ultragoal command: ${command}\n` };

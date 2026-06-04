@@ -28,6 +28,22 @@ describe("native gjc ralplan runtime — consensus handoff", () => {
 		expect(state.task).toBe("make state native");
 	});
 
+	it("emits receipt-only json for consensus handoff", async () => {
+		const root = await tempDir();
+		const result = await runNativeRalplanCommand(["--json", "--deliberate", "make state native"], root);
+		expect(result.status).toBe(0);
+		const payload = JSON.parse(result.stdout ?? "{}");
+		expect(payload).toMatchObject({
+			ok: true,
+			skill: "ralplan",
+			mode: "deliberate",
+			handoff: "/skill:ralplan",
+		});
+		expect(typeof payload.run_id).toBe("string");
+		expect(payload.state_path).toContain(path.join(".gjc", "state", "ralplan-state.json"));
+		expect(payload.task).toBeUndefined();
+	});
+
 	it("--architect openai-code seeds the kind into state", async () => {
 		const root = await tempDir();
 		const result = await runNativeRalplanCommand(

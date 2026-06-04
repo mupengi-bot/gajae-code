@@ -24,9 +24,10 @@ afterAll(() => {
 	if (priorSessionId !== undefined) process.env.GJC_SESSION_ID = priorSessionId;
 });
 
-function stateFrom(stdout: string | undefined): Record<string, unknown> {
-	const parsed = JSON.parse(stdout ?? "{}");
-	return parsed.state as Record<string, unknown>;
+function receiptFrom(stdout: string | undefined): Record<string, unknown> {
+	const parsed = JSON.parse(stdout ?? "{}") as Record<string, unknown>;
+	expect(parsed.state).toBeUndefined();
+	return parsed;
 }
 
 async function writeState(root: string, mode: string, state: Record<string, unknown>, extra: string[] = []) {
@@ -39,7 +40,7 @@ describe("gjc state write hardening", () => {
 		await writeState(root, "ralplan", { current_phase: "planner" });
 		const result = await writeState(root, "ralplan", { current_phase: "architect" });
 		expect(result.status).toBe(0);
-		expect(stateFrom(result.stdout).current_phase).toBe("architect");
+		expect(receiptFrom(result.stdout).current_phase).toBe("architect");
 	});
 
 	it("rejects a known-bad jump", async () => {
@@ -55,7 +56,7 @@ describe("gjc state write hardening", () => {
 		await writeState(root, "ralplan", { current_phase: "planner" });
 		const result = await writeState(root, "ralplan", { current_phase: "final" }, ["--force"]);
 		expect(result.status).toBe(0);
-		expect(stateFrom(result.stdout).current_phase).toBe("final");
+		expect(receiptFrom(result.stdout).current_phase).toBe("final");
 	});
 
 	it.each([
@@ -67,7 +68,7 @@ describe("gjc state write hardening", () => {
 		await writeState(root, mode, { current_phase: fromPhase });
 		const result = await writeState(root, mode, { current_phase: "handoff" });
 		expect(result.status).toBe(0);
-		expect(stateFrom(result.stdout).current_phase).toBe("handoff");
+		expect(receiptFrom(result.stdout).current_phase).toBe("handoff");
 	});
 
 	it("allows unknown legacy target phases", async () => {
@@ -75,14 +76,14 @@ describe("gjc state write hardening", () => {
 		await writeState(root, "ralplan", { current_phase: "planner" });
 		const result = await writeState(root, "ralplan", { current_phase: "legacy-custom" });
 		expect(result.status).toBe(0);
-		expect(stateFrom(result.stdout).current_phase).toBe("legacy-custom");
+		expect(receiptFrom(result.stdout).current_phase).toBe("legacy-custom");
 	});
 
 	it("allows seeds with no prior phase", async () => {
 		const root = await tempDir();
 		const result = await writeState(root, "ralplan", { current_phase: "final" });
 		expect(result.status).toBe(0);
-		expect(stateFrom(result.stdout).current_phase).toBe("final");
+		expect(receiptFrom(result.stdout).current_phase).toBe("final");
 	});
 
 	it("rejects non-object existing state before write", async () => {
@@ -121,14 +122,18 @@ describe("gjc state write hardening", () => {
 		};
 		const result = await writeState(root, "deep-interview", extension);
 		expect(result.status).toBe(0);
-		const written = stateFrom(result.stdout);
-		expect(written.rounds).toEqual(extension.rounds);
-		expect(written.topology).toEqual(extension.topology);
-		expect(written.ontology_snapshots).toEqual(extension.ontology_snapshots);
-		expect(written.architect_findings).toEqual(extension.architect_findings);
-		expect(written.new_requirements).toEqual(extension.new_requirements);
-		expect(written.ci_gates).toEqual(extension.ci_gates);
-		expect(written.research_findings).toEqual(extension.research_findings);
-		expect(written.extension_field).toEqual(extension.extension_field);
+		const written = receiptFrom(result.stdout);
+		expect(written).toMatchObject({ ok: true, skill: "deep-interview", current_phase: "interviewing" });
+		const onDisk = JSON.parse(
+			await fs.readFile(path.join(root, ".gjc", "state", "deep-interview-state.json"), "utf-8"),
+		);
+		expect(onDisk.rounds).toEqual(extension.rounds);
+		expect(onDisk.topology).toEqual(extension.topology);
+		expect(onDisk.ontology_snapshots).toEqual(extension.ontology_snapshots);
+		expect(onDisk.architect_findings).toEqual(extension.architect_findings);
+		expect(onDisk.new_requirements).toEqual(extension.new_requirements);
+		expect(onDisk.ci_gates).toEqual(extension.ci_gates);
+		expect(onDisk.research_findings).toEqual(extension.research_findings);
+		expect(onDisk.extension_field).toEqual(extension.extension_field);
 	});
 });

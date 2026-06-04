@@ -56,6 +56,8 @@ describe("gjc state handoff", () => {
 			expect(payload.from).toBe("deep-interview");
 			expect(payload.to).toBe("ralplan");
 			expect(typeof payload.handoff_at).toBe("string");
+			expect(payload.ok).toBe(true);
+			expect(payload.state).toBeUndefined();
 			const handoffAt = payload.handoff_at as string;
 
 			const caller = await readJson(callerPath);

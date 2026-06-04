@@ -203,6 +203,146 @@ describe("native GJC ultragoal runtime", () => {
 		expect(ledgerRaw).toContain("plan_created");
 	});
 
+	it("prints receipt-only json for create-goals", async () => {
+		const root = await tempDir();
+
+		const result = await runNativeUltragoalCommand(["create-goals", "--brief", "Ship the fix", "--json"], root);
+		const receipt = JSON.parse(result.stdout ?? "{}");
+
+		expect(result.status).toBe(0);
+		expect(receipt).toEqual({
+			ok: true,
+			goals_count: 1,
+			goal_ids: ["G001"],
+			goals_path: path.join(root, ".gjc", "ultragoal", "goals.json"),
+		});
+		expect(receipt).not.toHaveProperty("brief");
+		expect(receipt).not.toHaveProperty("goals");
+	});
+
+	it("prints receipt-only json for complete-goals", async () => {
+		const root = await tempDir();
+		const created = await createUltragoalPlan({ cwd: root, brief: "Ship the fix" });
+
+		const result = await runNativeUltragoalCommand(["complete-goals", "--json"], root);
+		const receipt = JSON.parse(result.stdout ?? "{}");
+
+		expect(result.status).toBe(0);
+		expect(receipt).toMatchObject({
+			ok: true,
+			all_complete: false,
+			next_action: "execute-goal",
+			goal_id: "G001",
+			goal_status: "active",
+			gjc_objective: created.gjcObjective,
+			goals_path: path.join(root, ".gjc", "ultragoal", "goals.json"),
+		});
+		expect(receipt).not.toHaveProperty("plan");
+		expect(receipt).not.toHaveProperty("goal");
+	});
+
+	it("prints receipt-only json for checkpoint", async () => {
+		const root = await tempDir();
+		const created = await createUltragoalPlan({ cwd: root, brief: "Ship the fix" });
+		await startNextUltragoalGoal({ cwd: root });
+
+		const result = await runNativeUltragoalCommand(
+			[
+				"checkpoint",
+				"--goal-id",
+				"G001",
+				"--status",
+				"complete",
+				"--evidence",
+				"tests passed",
+				"--gjc-goal-json",
+				goalSnapshot(created.gjcObjective),
+				"--quality-gate-json",
+				passingQualityGate(),
+				"--json",
+			],
+			root,
+		);
+		const receipt = JSON.parse(result.stdout ?? "{}");
+
+		expect(result.status).toBe(0);
+		expect(receipt).toMatchObject({
+			ok: true,
+			goal_id: "G001",
+			status: "complete",
+			goals_path: path.join(root, ".gjc", "ultragoal", "goals.json"),
+			completion_receipt_kind: "final-aggregate",
+		});
+		expect(receipt.quality_gate_hash).toEqual(expect.any(String));
+		expect(receipt).not.toHaveProperty("goals");
+	});
+
+	it("prints receipt-only json for steering", async () => {
+		const root = await tempDir();
+		await createUltragoalPlan({ cwd: root, brief: "Ship the fix" });
+
+		const result = await runNativeUltragoalCommand(
+			[
+				"steer",
+				"--kind",
+				"add_subgoal",
+				"--title",
+				"Verify the fix",
+				"--objective",
+				"Run focused verification.",
+				"--evidence",
+				"review found missing coverage",
+				"--rationale",
+				"coverage closes the risk",
+				"--json",
+			],
+			root,
+		);
+		const receipt = JSON.parse(result.stdout ?? "{}");
+
+		expect(result.status).toBe(0);
+		expect(receipt).toEqual({
+			ok: true,
+			kind: "add_subgoal",
+			goal_id: "G002",
+			goals_path: path.join(root, ".gjc", "ultragoal", "goals.json"),
+		});
+		expect(receipt).not.toHaveProperty("goals");
+	});
+
+	it("prints receipt-only json for review blockers", async () => {
+		const root = await tempDir();
+		const created = await createUltragoalPlan({ cwd: root, brief: "Ship the fix" });
+		await startNextUltragoalGoal({ cwd: root });
+
+		const result = await runNativeUltragoalCommand(
+			[
+				"record-review-blockers",
+				"--goal-id",
+				"G001",
+				"--title",
+				"Resolve verification blockers",
+				"--objective",
+				"Fix architect and executor QA findings.",
+				"--evidence",
+				"architect found product regression",
+				"--gjc-goal-json",
+				goalSnapshot(created.gjcObjective),
+				"--json",
+			],
+			root,
+		);
+		const receipt = JSON.parse(result.stdout ?? "{}");
+
+		expect(result.status).toBe(0);
+		expect(receipt).toEqual({
+			ok: true,
+			goal_id: "G002",
+			goals_path: path.join(root, ".gjc", "ultragoal", "goals.json"),
+		});
+		expect(receipt).not.toHaveProperty("goals");
+	});
+
 	it("starts and checkpoints the current goal", async () => {
 		const root = await tempDir();
 		const created = await createUltragoalPlan({ cwd: root, brief: "Ship the fix" });

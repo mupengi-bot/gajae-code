@@ -23,6 +23,7 @@ import {
 	describeWorkflowStateContract,
 	type WorkflowStateReceipt,
 } from "../skill-state/workflow-state-contract";
+import { renderCliWriteReceipt } from "./cli-write-receipt";
 import { renderStateGraph, type StateGraphFormat } from "./state-graph";
 import { migrateAndPersistLegacyState } from "./state-migrations";
 import {
@@ -1124,7 +1125,16 @@ async function handleWrite(
 
 	return {
 		status: 0,
-		stdout: `${JSON.stringify({ skill: mode, state: merged, receipt }, null, 2)}\n`,
+		stdout: renderCliWriteReceipt({
+			ok: true,
+			skill: mode,
+			state_path: filePath,
+			current_phase: phase,
+			active,
+			mutation_id: mutationId,
+			status: typeof receipt.status === "string" ? receipt.status : undefined,
+			content_sha256: receipt.content_sha256,
+		}),
 		...(outOfBandWarning ? { stderr: `${outOfBandWarning}\n` } : {}),
 	};
 }
@@ -1145,14 +1155,27 @@ async function handleClear(
 
 	const filePath = modeStateFile(cwd, mode, sessionId);
 	const existing = (await readJsonFile(filePath)) ?? {};
+	const clearedAt = nowIso();
 	const cleared: Record<string, unknown> = {
 		...existing,
 		active: false,
 		current_phase: "complete",
-		updated_at: nowIso(),
+		updated_at: clearedAt,
 	};
+	const mutationId = `${mode}:clear:${clearedAt}`;
+	const receipt = buildWorkflowStateReceipt({
+		cwd,
+		skill: mode,
+		owner: "gjc-state-cli",
+		command: `gjc state ${mode} clear`,
+		sessionId,
+		nowIso: clearedAt,
+		mutationId,
+	});
+	cleared.receipt = receipt;
 	const outOfBandWarning = await writeJsonAtomic(cwd, filePath, cleared, "clear", {
 		skill: mode,
+		mutationId,
 		force: hasFlag(args, "--force"),
 		fromPhase: typeof existing.current_phase === "string" ? existing.current_phase : undefined,
 		toPhase: "complete",
@@ -1170,7 +1193,15 @@ async function handleClear(
 	});
 	return {
 		status: 0,
-		stdout: `${JSON.stringify(cleared, null, 2)}\n`,
+		stdout: renderCliWriteReceipt({
+			ok: true,
+			skill: mode,
+			state_path: filePath,
+			active: false,
+			current_phase: typeof cleared.current_phase === "string" ? cleared.current_phase : undefined,
+			mutation_id: mutationId,
+			status: typeof receipt.status === "string" ? receipt.status : undefined,
+		}),
 		...(outOfBandWarning ? { stderr: `${outOfBandWarning}\n` } : {}),
 	};
 }
@@ -1356,7 +1387,8 @@ async function handleHandoff(
 
 	return {
 		status: 0,
-		stdout: `${JSON.stringify({
+		stdout: renderCliWriteReceipt({
+			ok: true,
 			from: caller,
 			to: callee,
 			handoff_at: handoffAt,
@@ -1373,7 +1405,7 @@ async function handleHandoff(
 				to: calleePath,
 				active_state: activeStateFile(cwd, sessionId),
 			},
-		})}\n`,
+		}),
 	};
 }
 

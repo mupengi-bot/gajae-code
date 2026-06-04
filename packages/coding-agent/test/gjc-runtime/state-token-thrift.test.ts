@@ -138,7 +138,8 @@ describe("GJC state token thrift", () => {
 			root,
 		);
 		expect(extension.status).toBe(0);
-		const parsed = JSON.parse(extension.stdout ?? "{}");
+		const readBack = await runNativeStateCommand(["read", "--mode", "ralplan", "--json"], root);
+		const parsed = JSON.parse(readBack.stdout ?? "{}");
 		expect(parsed.state.rounds).toEqual([{ n: 1 }]);
 		expect(parsed.state.topology).toEqual({ free: ["form"] });
 	});
