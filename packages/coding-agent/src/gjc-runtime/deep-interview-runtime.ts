@@ -2,7 +2,6 @@ import { createHash, randomBytes } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Settings } from "../config/settings";
 import { syncSkillActiveState } from "../skill-state/active-state";
 import { buildDeepInterviewHudSummary } from "../skill-state/workflow-hud";
 import { WORKFLOW_STATE_VERSION } from "../skill-state/workflow-state-contract";
@@ -200,11 +199,16 @@ async function readSettingsAmbiguityThreshold(
 	return { threshold: candidate, source: settingsPath };
 }
 
-async function readModernSettingsAmbiguityThreshold(
-	cwd: string,
-): Promise<{ threshold: number; source: string } | undefined> {
-	const settings = await Settings.init({ cwd });
-	const modernConfigPath = path.join(settings.getAgentDir(), "config.yml");
+function modernSettingsPath(): string {
+	const configDir = process.env.GJC_CODING_AGENT_DIR?.trim() || process.env.PI_CODING_AGENT_DIR?.trim();
+	if (configDir) return path.join(configDir, "config.yml");
+	const configRoot = process.env.GJC_CONFIG_DIR?.trim() || process.env.PI_CONFIG_DIR?.trim();
+	if (configRoot) return path.join(configRoot, "agent", "config.yml");
+	return path.join(os.homedir(), ".gjc", "agent", "config.yml");
+}
+
+async function readModernSettingsAmbiguityThreshold(): Promise<{ threshold: number; source: string } | undefined> {
+	const modernConfigPath = modernSettingsPath();
 	let parsed: unknown;
 	try {
 		parsed = (await import("bun")).YAML.parse(await fs.readFile(modernConfigPath, "utf-8"));
@@ -221,7 +225,7 @@ async function readModernSettingsAmbiguityThreshold(
 async function resolveConfiguredAmbiguityThreshold(
 	cwd: string,
 ): Promise<{ threshold: number; source: string } | undefined> {
-	const modernValue = await readModernSettingsAmbiguityThreshold(cwd);
+	const modernValue = await readModernSettingsAmbiguityThreshold();
 	if (modernValue) return modernValue;
 	const projectSettings = path.join(cwd, ".gjc", "settings.json");
 	const projectValue = await readSettingsAmbiguityThreshold(projectSettings);
