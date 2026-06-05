@@ -8,11 +8,11 @@ import { seekSequence } from "../../src/edit/modes/replace";
 // with native active is covered by the "Unicode punctuation" seekSequence case
 // in edit-hotspots-golden (snapshot oracle, no --update).
 test("no lowercasing: case-only difference is not a perfect normalized match", () => {
-  const content = ["function ALPHA() {}", "function beta() {}"];
-  const r = seekSequence(content, ["function alpha() {}"], 0, false, { allowFuzzy: true });
-  if (r && typeof r.confidence === "number") expect(r.confidence).toBeLessThan(1);
+	const content = ["function ALPHA() {}", "function beta() {}"];
+	const r = seekSequence(content, ["function alpha() {}"], 0, false, { allowFuzzy: true });
+	if (r && typeof r.confidence === "number") expect(r.confidence).toBeLessThan(1);
 });
 
 test("native h02 scorer export is callable", () => {
-  expect(typeof h02ScoreSequenceFuzzy).toBe("function");
+	expect(typeof h02ScoreSequenceFuzzy).toBe("function");
 });

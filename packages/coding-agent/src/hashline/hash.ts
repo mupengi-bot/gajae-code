@@ -4,6 +4,7 @@
  */
 
 import bigrams from "./bigrams.json" with { type: "json" };
+
 // Optional native acceleration for formatHashLines. Loaded WITHOUT throwing at
 // module evaluation so this core module (and its re-exported helpers) stays
 // usable and falls back to the TS loop if the native addon is unavailable.

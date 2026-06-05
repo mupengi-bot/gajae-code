@@ -42,6 +42,7 @@ void import("../../../../natives/native/index.js")
 	.catch(() => {
 		// Native unavailable; fuzzy matching uses the TS fallback.
 	});
+
 import { readEditFileText, serializeEditFileText } from "../read-file";
 import type { EditToolDetails, LspBatchRequest } from "../renderer";
 

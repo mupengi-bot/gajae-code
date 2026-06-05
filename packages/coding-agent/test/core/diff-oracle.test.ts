@@ -13,7 +13,9 @@ const fixtures = [
 	{
 		name: "insert delete with context collapse",
 		oldText: Array.from({ length: 18 }, (_, i) => `line ${i + 1}`).join("\n"),
-		newText: Array.from({ length: 18 }, (_, i) => (i === 2 ? "line THREE" : i === 14 ? "line FIFTEEN" : `line ${i + 1}`)).join("\n"),
+		newText: Array.from({ length: 18 }, (_, i) =>
+			i === 2 ? "line THREE" : i === 14 ? "line FIFTEEN" : `line ${i + 1}`,
+		).join("\n"),
 	},
 	{
 		name: "CRLF unicode and tabs",
