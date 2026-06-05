@@ -20,6 +20,47 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { EventEnvelope, ReceiptFamily, SessionState } from "./types";
 
+interface HarnessRootRegistryEntry {
+	root: string;
+	updatedAt: string;
+}
+
+interface HarnessRootRegistry {
+	sessionId: string;
+	roots: HarnessRootRegistryEntry[];
+}
+
+function harnessRootRegistryDir(env: NodeJS.ProcessEnv = process.env): string {
+	return path.join(os.tmpdir(), `gjch${process.getuid?.() ?? "u"}`, "harness-roots");
+}
+
+function harnessRootRegistryPath(sessionId: string, env: NodeJS.ProcessEnv = process.env): string {
+	assertSafeSessionId(sessionId);
+	return path.join(harnessRootRegistryDir(env), `${sessionId}.json`);
+}
+
+async function readHarnessRootRegistry(
+	sessionId: string,
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<HarnessRootRegistry> {
+	const file = harnessRootRegistryPath(sessionId, env);
+	try {
+		const raw = await fs.readFile(file, "utf8");
+		const parsed = JSON.parse(raw) as HarnessRootRegistry;
+		if (parsed.sessionId === sessionId && Array.isArray(parsed.roots)) return parsed;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	return { sessionId, roots: [] };
+}
+
+async function writeHarnessRootRegistry(
+	registry: HarnessRootRegistry,
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+	const file = harnessRootRegistryPath(registry.sessionId, env);
+	await writeJsonAtomic(file, registry);
+}
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 export const MAX_UNIX_SOCKET_PATH_BYTES = 100;
 
@@ -148,6 +189,37 @@ async function readJson<T>(file: string): Promise<T | null> {
 
 export async function readSessionState(root: string, sessionId: string): Promise<SessionState | null> {
 	return readJson<SessionState>(sessionPaths(root, sessionId).state);
+}
+export async function rememberHarnessSessionRoot(
+	root: string,
+	sessionId: string,
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+	assertSafeSessionId(sessionId);
+	const resolvedRoot = path.resolve(root);
+	const registry = await readHarnessRootRegistry(sessionId, env);
+	const now = new Date().toISOString();
+	registry.roots = [
+		{ root: resolvedRoot, updatedAt: now },
+		...registry.roots.filter(entry => path.resolve(entry.root) !== resolvedRoot),
+	].slice(0, 8);
+	await writeHarnessRootRegistry(registry, env);
+}
+
+export async function resolveHarnessSessionRoot(
+	root: string,
+	sessionId: string,
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<string> {
+	assertSafeSessionId(sessionId);
+	const resolvedRoot = path.resolve(root);
+	if ((await readSessionState(resolvedRoot, sessionId)) !== null) return resolvedRoot;
+	const registry = await readHarnessRootRegistry(sessionId, env);
+	for (const entry of registry.roots) {
+		const candidate = path.resolve(entry.root);
+		if ((await readSessionState(candidate, sessionId)) !== null) return candidate;
+	}
+	return resolvedRoot;
 }
 
 export async function writeSessionState(root: string, state: SessionState): Promise<void> {

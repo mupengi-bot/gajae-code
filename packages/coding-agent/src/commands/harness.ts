@@ -25,7 +25,9 @@ import {
 	generateSessionId,
 	readEvents,
 	readSessionState,
+	rememberHarnessSessionRoot,
 	resolveHarnessRoot,
+	resolveHarnessSessionRoot,
 	sessionPaths,
 	writeReceiptImmutable,
 	writeSessionState,
@@ -442,9 +444,11 @@ export default class Harness extends Command {
 	async run(): Promise<void> {
 		const { args, flags } = await this.parse(Harness);
 		const verb = String(args.verb);
-		const root = resolveHarnessRoot();
+		let root = resolveHarnessRoot();
 		try {
 			const input = parseInput(flags.input);
+			const sessionId = flags.session ?? (typeof input.sessionId === "string" ? input.sessionId : undefined);
+			if (verb !== "start" && sessionId) root = await resolveHarnessSessionRoot(root, sessionId);
 			switch (verb) {
 				case "start":
 					return await this.#start(root, input);
@@ -688,6 +692,7 @@ export default class Harness extends Command {
 			updatedAt: startedAt,
 		};
 		await writeSessionState(root, state);
+		await rememberHarnessSessionRoot(root, sessionId);
 		let ownerLive = false;
 		let ownerRuntime: OwnerSpawnResult["runtime"] = "manual";
 		let ownerFallbackReason: string | null = null;

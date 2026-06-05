@@ -42,6 +42,27 @@ function runHarness(args: string[]): HarnessResult {
 	}
 	return { code: proc.exitCode ?? 0, json, raw };
 }
+function runHarnessInCwd(args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env): HarnessResult {
+	const proc = Bun.spawnSync(["bun", cliEntry, "harness", ...args], {
+		cwd,
+		env,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	const raw = proc.stdout.toString().trim();
+	let json: any = null;
+	try {
+		json = JSON.parse(raw);
+	} catch {
+		// leave null; assertions will surface the raw output
+	}
+	return { code: proc.exitCode ?? 0, json, raw };
+}
+function harnessEnvWithoutStateRoot(): NodeJS.ProcessEnv {
+	const env = { ...process.env };
+	delete env.GJC_HARNESS_STATE_ROOT;
+	return env;
+}
 
 function assertContract(res: any): void {
 	expect(res, `expected contract object, got: ${JSON.stringify(res)}`).toBeTruthy();
@@ -178,6 +199,49 @@ describe("gjc harness CLI (foundation)", () => {
 		expect(res.json.evidence.observation).toHaveProperty("gitDelta");
 		expect(res.json.evidence.observation).toHaveProperty("risk");
 		expect(res.json.evidence.observation).not.toHaveProperty("pane");
+	});
+
+	it("re-acquires observe and recover by session id across cwd without state-root env", async () => {
+		await initCleanGitWorkspace();
+		const otherCwd = await mkdtemp(path.join(tmpdir(), "harness-cli-other-cwd-"));
+		try {
+			const env = harnessEnvWithoutStateRoot();
+			const started = runHarnessInCwd(
+				["start", "--input", JSON.stringify({ harness: "gajae-code", workspace })],
+				workspace,
+				env,
+			);
+			expect(started.code).toBe(0);
+			const sessionId = started.json.evidence.handle.sessionId as string;
+
+			await appendEvent(path.join(workspace, ".gjc", "state", "harness"), sessionId, {
+				eventId: "evt-cross-cwd-prompt",
+				cursor: 1,
+				createdAt: "2026-06-03T00:00:01.000Z",
+				severity: "info",
+				kind: "prompt_accepted",
+				state: { sessionId, lifecycle: "observing", harness: "gajae-code", ownerLive: true, blockers: [] },
+				evidence: { signal: "prompt-accepted" },
+				nextAllowedActions: [],
+				writer: { ownerId: "owner-exited", leaseEpoch: 1 },
+			});
+
+			const observed = runHarnessInCwd(["observe", "--session", sessionId], otherCwd, env);
+			expect(observed.code).toBe(0);
+			assertContract(observed.json);
+			expect(observed.json.state.sessionId).toBe(sessionId);
+			expect(observed.json.evidence.observation.cwd).toBe(workspace);
+			expect(observed.json.evidence.observation.observedSignals).toContain("prompt-accepted");
+
+			const recovered = runHarnessInCwd(["recover", "--session", sessionId], otherCwd, env);
+			expect(recovered.code).toBe(1);
+			assertContract(recovered.json);
+			expect(recovered.json.state.sessionId).toBe(sessionId);
+			expect(recovered.json.evidence.reason).toBe("owner-exited-after-prompt-acceptance");
+			expect(recovered.json.evidence.observation.cwd).toBe(workspace);
+		} finally {
+			await rm(otherCwd, { recursive: true, force: true });
+		}
 	});
 
 	it("observe exposes durable completion evidence after the owner has exited", async () => {
