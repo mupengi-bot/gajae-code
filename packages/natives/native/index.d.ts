@@ -681,6 +681,8 @@ export interface GrepResult {
   limitReached?: boolean
 }
 
+export declare function h06FormatHashLines(text: string, startLine?: number | undefined | null): string
+
 /**
  * Quick check if content matches a pattern.
  *

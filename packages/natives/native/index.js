@@ -39,6 +39,7 @@ export const getSupportedLanguages = nativeBindings.getSupportedLanguages;
 export const getWorkProfile = nativeBindings.getWorkProfile;
 export const glob = nativeBindings.glob;
 export const grep = nativeBindings.grep;
+export const h06FormatHashLines = nativeBindings.h06FormatHashLines;
 export const hasMatch = nativeBindings.hasMatch;
 export const highlightCode = nativeBindings.highlightCode;
 export const htmlToMarkdown = nativeBindings.htmlToMarkdown;

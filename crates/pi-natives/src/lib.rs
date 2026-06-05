@@ -31,6 +31,7 @@ pub mod glob;
 pub mod glob_util;
 pub mod grep;
 pub mod highlight;
+pub mod hashline;
 pub mod html;
 pub mod keys;
 pub mod sixel;

@@ -4,6 +4,7 @@
  */
 
 import bigrams from "./bigrams.json" with { type: "json" };
+import { h06FormatHashLines as formatHashLinesNative } from "../../../natives/native/index.js";
 
 /**
  * 647 single-token BPE bigrams for hashline anchors. Every entry tokenizes as
@@ -168,6 +169,13 @@ export function formatHashLine(lineNumber: number, line: string): string {
  * ```
  */
 export function formatHashLines(text: string, startLine = 1): string {
+	try {
+		if (typeof formatHashLinesNative === "function") {
+			return formatHashLinesNative(text, startLine);
+		}
+	} catch {
+		// Native hashline formatting is an optimization only; preserve the TS contract.
+	}
 	const lines = text.split("\n");
 	return lines.map((line, i) => formatHashLine(startLine + i, line)).join("\n");
 }

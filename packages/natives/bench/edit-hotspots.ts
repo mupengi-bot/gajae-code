@@ -1,6 +1,6 @@
 import { generateDiffString, replaceText } from "../../coding-agent/src/edit/diff";
 import { findMatch, seekSequence } from "../../coding-agent/src/edit/modes/replace";
-import { formatHashLines } from "../../coding-agent/src/hashline/hash";
+import { formatHashLine, formatHashLines } from "../../coding-agent/src/hashline/hash";
 
 const ITERATIONS = Number(Bun.env.EDIT_HOTSPOTS_BENCH_ITERATIONS ?? "200");
 const WARMUP = Number(Bun.env.EDIT_HOTSPOTS_BENCH_WARMUP ?? "25");
@@ -42,6 +42,11 @@ const hashText = Array.from({ length: 2500 }, (_, index) => {
 	return `hash line ${index} trailing   `;
 }).join("\n");
 
+function formatHashLinesTsBaseline(text: string, startLine = 1): string {
+	const lines = text.split("\n");
+	return lines.map((line, i) => formatHashLine(startLine + i, line)).join("\n");
+}
+
 const candidates: Candidate[] = [
 	{
 		id: "H01",
@@ -73,7 +78,7 @@ const candidates: Candidate[] = [
 		name: "formatHashLines hotspot",
 		fixture: "hashline display corpus",
 		dimensions: { lines: hashText.split("\n").length, bytes: Buffer.byteLength(hashText), startLine: 37 },
-		baselineFn: () => formatHashLines(hashText, 37),
+		baselineFn: () => formatHashLinesTsBaseline(hashText, 37),
 		nativeExportNames: ["h06FormatHashLines", "formatHashLinesNative", "formatHashLines"],
 		nativeArgs: [hashText, 37],
 	},
