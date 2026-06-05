@@ -54,8 +54,8 @@ const candidates: Candidate[] = [
 		fixture: "multi-line edit corpus",
 		dimensions: { lines: editLines.length, bytes: Buffer.byteLength(editContent), targetBytes: Buffer.byteLength(h01Target) },
 		baselineFn: () => findMatch(editContent, h01Target, { allowFuzzy: true, threshold: 0.9 }),
-		nativeExportNames: ["h01FindMatch", "findMatchNative", "findMatch"],
-		nativeArgs: [editContent, h01Target, { allowFuzzy: true, threshold: 0.9 }],
+		nativeExportNames: ["h01FindBestFuzzyMatch"],
+		nativeArgs: [editContent, h01Target, 0.9],
 	},
 	{
 		id: "H02",
@@ -70,8 +70,8 @@ const candidates: Candidate[] = [
 			const sequence = seekSequence(editLines, ["    return alphaBetaGamme(value, options);"], 0, false, { allowFuzzy: true });
 			return { replaced, sequence };
 		},
-		nativeExportNames: ["h02ReplaceAndSeek", "replaceAndSeekNative"],
-		nativeArgs: [editContent, "    return alphaBetaGamma(value, options);", h02Replacement, editLines, [h01Target]],
+		nativeExportNames: ["h02ScoreSequenceFuzzy"],
+		nativeArgs: [editLines, [h01Target], 0, false],
 	},
 	{
 		id: "H06",
