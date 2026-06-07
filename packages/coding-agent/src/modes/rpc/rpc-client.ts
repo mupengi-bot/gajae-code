@@ -20,6 +20,8 @@ import type {
 	RpcHostToolUpdate,
 	RpcResponse,
 	RpcSessionState,
+	RpcUnattendedAccepted,
+	RpcUnattendedDeclaration,
 	RpcWorkflowGate,
 	RpcWorkflowGateResolution,
 	RpcWorkflowGateResponse,
@@ -338,6 +340,26 @@ export class RpcClient {
 			answer,
 			idempotency_key: idempotencyKey,
 		});
+		return this.#getData(response);
+	}
+
+	/**
+	 * Subscribe to extension UI requests emitted by the server (e.g. select /
+	 * input / editor / confirm). Returns an unsubscribe function.
+	 */
+	onExtensionUiRequest(listener: (req: RpcExtensionUIRequest) => void): () => void {
+		this.#extensionUiListeners.add(listener);
+		return () => {
+			this.#extensionUiListeners.delete(listener);
+		};
+	}
+
+	/**
+	 * Enter unattended mode by declaring budget + scopes + action allowlist.
+	 * Returns the accepted declaration, or rejects (fail-closed) on refusal.
+	 */
+	async negotiateUnattended(declaration: RpcUnattendedDeclaration): Promise<RpcUnattendedAccepted> {
+		const response = await this.#send({ type: "negotiate_unattended", declaration });
 		return this.#getData(response);
 	}
 
