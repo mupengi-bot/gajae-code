@@ -532,8 +532,8 @@ After the spec is written, mark it `pending approval` and present execution opti
 
 1. **Refine with ralplan consensus (Recommended — default for almost all specs)**
    - Description: "Consensus-refine this spec with Planner/Architect/Critic, then stop for explicit execution approval. Maximum quality. Prefer this unless the spec is already implementation-ready and trivially simple."
-   - Action: Only after the user selects this option, invoke `/skill:ralplan --consensus --direct` with the spec file path as context. The `--direct` flag skips the ralplan skill's interview phase (the deep interview already gathered requirements), while `--consensus` triggers the Planner/Architect/Critic loop. When consensus completes and produces a plan in `.gjc/plans/`, stop with that plan marked `pending approval`; do not automatically invoke execution or any other execution skill.
-   - Pipeline: `deep-interview spec → explicit approval to refine → ralplan --consensus --direct → pending approval → separate execution approval`
+   - Action: Only after the user selects this option, invoke `/skill:ralplan` with the spec file path as context. Ralplan is already the Planner → Architect → Critic consensus workflow, so no extra slash-skill flags are required or supported. When consensus completes and produces a plan in `.gjc/plans/`, stop with that plan marked `pending approval`; do not automatically invoke execution or any other execution skill.
+   - Pipeline: `deep-interview spec → explicit approval to refine → ralplan → pending approval → separate execution approval`
 
 2. **Execute with ultragoal (only when spec is already implementation-ready and really simple)**
    - Description: "Goal-tracked autonomous execution — drives the spec to completion with verification. Skip ralplan refinement only when the spec is concrete, low-risk, and trivially small."
@@ -730,7 +730,7 @@ Why bad: 45% ambiguity means nearly half the requirements are unclear. The mathe
 - [ ] Spec includes: topology, goal, constraints, acceptance criteria, clarity breakdown, transcript
 - [ ] Execution bridge presented via the `ask` tool
 - [ ] Selected execution mode invoked via public GJC workflow entrypoint only after explicit execution approval (never direct implementation)
-- [ ] If 3-stage pipeline selected: ralplan --consensus --direct invoked, then stopped with the consensus plan marked `pending approval` until the user explicitly approves execution
+- [ ] If 3-stage pipeline selected: `/skill:ralplan` invoked with the spec as context, then stopped with the consensus plan marked `pending approval` until the user explicitly approves execution
 - [ ] State cleaned up after approved workflow handoff
 - [ ] Brownfield confirmation questions cite repo evidence (file/path/pattern) before asking the user to decide
 - [ ] Scope-fuzzy tasks can trigger ontology-style questioning to stabilize the core entity before feature elaboration
@@ -790,7 +790,7 @@ The recommended refinement path chains clarity and feasibility gates, then stops
   → Socratic Q&A until ambiguity ≤ <resolvedThresholdPercent>
   → Spec written to .gjc/specs/deep-interview-{slug}.md
   → User explicitly selects "Refine with ralplan consensus"
-  → /skill:ralplan --consensus --direct (spec as input, skip interview)
+  → /skill:ralplan (spec as input)
     → Planner creates implementation plan from spec
     → Architect reviews for architectural soundness
     → Critic validates quality and testability
@@ -800,7 +800,7 @@ The recommended refinement path chains clarity and feasibility gates, then stops
   → Only a separate explicit execution approval may invoke execution (ultragoal by default; team only when tmux-based interactive worker parallelization is required)
 ```
 
-**The ralplan skill receives the spec with `--consensus --direct` flags** because the deep interview already did the requirements gathering. The `--direct` flag (supported by the ralplan skill, which ralplan aliases) skips the interview phase and goes straight to Planner → Architect → Critic consensus. The consensus plan includes:
+**The ralplan skill receives the spec as context through `/skill:ralplan`** because ralplan is already the GJC Planner → Architect → Critic consensus workflow. The consensus plan includes:
 - RALPLAN-DR summary (Principles, Decision Drivers, Options)
 - ADR (Decision, Drivers, Alternatives, Why chosen, Consequences)
 - Testable acceptance criteria (inherited from deep-interview spec)

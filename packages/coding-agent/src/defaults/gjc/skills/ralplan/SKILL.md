@@ -61,7 +61,7 @@ The consensus workflow:
    - Viable Options (>=2) with bounded pros/cons
    - If only one viable option remains, explicit invalidation rationale for alternatives
    - Deliberate mode only: pre-mortem (3 scenarios) + expanded test plan (unit/integration/e2e/observability)
-2. **User feedback** *(--interactive only)*: If `--interactive` is set, use `AskUserQuestion` to present the draft plan **plus the Principles / Drivers / Options summary** before review (Proceed to review / Request changes / Skip review). Otherwise, automatically proceed to review.
+2. **User feedback** *(--interactive only)*: If `--interactive` is set, use the `ask` tool to present the draft plan **plus the Principles / Drivers / Options summary** before review (Proceed to review / Request changes / Skip review). Otherwise, automatically proceed to review.
 3. **Architect** reviews for architectural soundness and must provide the strongest steelman antithesis, at least one real tradeoff tension, and (when possible) synthesis — **await completion before step 4**. In deliberate mode, Architect should explicitly flag principle violations.
    - The Architect agent/subagent must persist its review with `gjc ralplan --write --stage architect --stage_n <N> --artifact "..." --json`, then return the receipt/path plus compact verdict/status (`CLEAR`/`WATCH`/`BLOCK`, `APPROVE`/`COMMENT`/`REQUEST CHANGES`) instead of pasting the full review body.
 4. **Critic** evaluates against quality criteria — run only after step 3 completes. Critic must enforce principle-option consistency, fair alternatives, risk mitigation clarity, testable acceptance criteria, and concrete verification steps. In deliberate mode, Critic must reject missing/weak pre-mortem or expanded test plan.
@@ -74,7 +74,7 @@ The consensus workflow:
    d. Return to Critic evaluation
    e. Repeat this loop until Critic returns `APPROVE` or 5 iterations are reached
    f. If 5 iterations are reached without `APPROVE`, present the best version to the user
-6. On Critic approval, mark the plan `pending approval` unless explicit execution approval has already been captured, persist the ADR/final plan via `gjc ralplan --write --stage final --stage_n <N> --artifact "..."`, and do not directly edit `.gjc/plans`. *(--interactive only)* If `--interactive` is set, use `AskUserQuestion` to present the plan with approval options (Approve execution via ultragoal (Recommended) / Approve execution via team (only when tmux-based interactive worker parallelization is required) / Compact then return for execution approval / Request changes / Reject). Final plan must include ADR (Decision, Drivers, Alternatives considered, Why chosen, Consequences, Follow-ups). Otherwise, output the final plan and stop before any mutation or delegation.
+6. On Critic approval, mark the plan `pending approval` unless explicit execution approval has already been captured, persist the ADR/final plan via `gjc ralplan --write --stage final --stage_n <N> --artifact "..."`, and do not directly edit `.gjc/plans`. *(--interactive only)* If `--interactive` is set, use the `ask` tool to present the plan with approval options (Approve execution via ultragoal (Recommended) / Approve execution via team (only when tmux-based interactive worker parallelization is required) / Compact then return for execution approval / Request changes / Reject). Final plan must include ADR (Decision, Drivers, Alternatives considered, Why chosen, Consequences, Follow-ups). Otherwise, output the final plan and stop before any mutation or delegation.
 7. *(--interactive only)* User chooses: Approve ultragoal execution (recommended), Approve team execution (tmux parallelization only), Request changes, or Reject
 8. *(--interactive only)* On approval: invoke `/skill:ultragoal` for execution by default; invoke `/skill:team` only when the user explicitly needs tmux-based interactive worker parallelization -- never implement directly
 
@@ -121,7 +121,7 @@ Set `--planner-resumable true` only when the parent session is provably persiste
 
 ### Why the Gate Exists
 
-Execution modes (team, team, team, team, team) spin up heavy multi-agent orchestration. When launched on a vague request like "team improve the app", agents have no clear target — they waste cycles on scope discovery that should happen during planning, often delivering partial or misaligned work that requires rework.
+Execution skills (`ultragoal` and `team`) drive implementation rather than scope discovery. When launched on a vague request like "team improve the app", agents have no clear target — they waste cycles on scope discovery that should happen during planning, often delivering partial or misaligned work that requires rework.
 
 The ralplan-first gate intercepts underspecified execution requests and redirects them through the ralplan consensus planning workflow. This ensures:
 - **Explicit scope**: A PRD defines exactly what will be built
