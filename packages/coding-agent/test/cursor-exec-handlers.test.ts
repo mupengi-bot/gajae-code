@@ -7,7 +7,16 @@
  *   "undefined is not an object (evaluating 'this.#optionsForCall')"
  */
 import { describe, expect, it } from "bun:test";
-import type { AgentTool } from "@gajae-code/agent";
+import { create } from "@bufbuild/protobuf";
+import type { AgentTool } from "@gajae-code/agent-core";
+import {
+	DiagnosticsArgsSchema,
+	GrepArgsSchema,
+	LsArgsSchema,
+	ReadArgsSchema,
+	ShellArgsSchema,
+	WriteArgsSchema,
+} from "@gajae-code/ai/providers/cursor/gen/agent_pb";
 import { CursorExecHandlers } from "../src/cursor";
 
 function makeTool(name: string): AgentTool {
@@ -36,7 +45,7 @@ describe("CursorExecHandlers detached invocation (#484)", () => {
 	it("read works when called detached without losing #optionsForCall", async () => {
 		const handlers = makeHandlers();
 		const read = handlers.read;
-		const result = await read({ path: "/tmp/package.json", toolCallId: "c1" });
+		const result = await read(create(ReadArgsSchema, { path: "/tmp/package.json", toolCallId: "c1" }));
 		expect(result.role).toBe("toolResult");
 		expect(result.isError).toBeFalsy();
 		expect(result.toolName).toBe("read");
@@ -47,12 +56,12 @@ describe("CursorExecHandlers detached invocation (#484)", () => {
 		const { read, ls, grep, shell, write, diagnostics } = handlers;
 
 		const calls = [
-			read({ path: "/tmp/a.txt", toolCallId: "r" }),
-			ls({ path: "/tmp", toolCallId: "l" }),
-			grep({ pattern: "foo", path: "/tmp", toolCallId: "g" }),
-			shell({ command: "echo hi", toolCallId: "s" }),
-			write({ path: "/tmp/b.txt", fileText: "x", toolCallId: "w" }),
-			diagnostics({ path: "/tmp/a.ts", toolCallId: "d" }),
+			read(create(ReadArgsSchema, { path: "/tmp/a.txt", toolCallId: "r" })),
+			ls(create(LsArgsSchema, { path: "/tmp", toolCallId: "l" })),
+			grep(create(GrepArgsSchema, { pattern: "foo", path: "/tmp", toolCallId: "g" })),
+			shell(create(ShellArgsSchema, { command: "echo hi", toolCallId: "s" })),
+			write(create(WriteArgsSchema, { path: "/tmp/b.txt", fileText: "x", toolCallId: "w" })),
+			diagnostics(create(DiagnosticsArgsSchema, { path: "/tmp/a.ts", toolCallId: "d" })),
 		];
 
 		const results = await Promise.all(calls);
