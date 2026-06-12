@@ -1,5 +1,7 @@
 // MUST be first: pins terminal-capability env before @gajae-code/tui evaluates.
-import { GOLDEN_BASELINE_ENV } from "./render-goldens-env";
+// (Bare side-effect import — biome keeps it as a chunk boundary, so it cannot
+// be re-sorted below the @gajae-code/tui imports.)
+import "./render-goldens-env";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,6 +16,7 @@ import {
 	TUI,
 } from "@gajae-code/tui";
 import { ImageProtocol } from "@gajae-code/tui/terminal-capabilities";
+import { GOLDEN_BASELINE_ENV } from "./render-goldens-env";
 import { defaultEditorTheme, defaultMarkdownTheme } from "./test-themes";
 import { VirtualTerminal } from "./virtual-terminal";
 

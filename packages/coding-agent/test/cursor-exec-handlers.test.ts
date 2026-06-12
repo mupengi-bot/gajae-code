@@ -176,7 +176,7 @@ describe("CursorExecHandlers shell timeout unit conversion", () => {
 		const bashCalls: Array<Record<string, unknown>> = [];
 		const handlers = makeShellRecordingHandlers(bashCalls);
 		await handlers.shell(create(ShellArgsSchema, { command: "echo hi", toolCallId: "s" }));
-		expect(bashCalls[0]?.["timeout"]).toBeUndefined();
+		expect(bashCalls[0]?.timeout).toBeUndefined();
 	});
 
 	it("rounds sub-second timeouts up to 1s instead of dropping them", async () => {
