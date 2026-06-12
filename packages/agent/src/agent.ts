@@ -680,7 +680,11 @@ export class Agent {
 		if (!source) return undefined;
 
 		const guarded: CursorExecHandlers = {};
-		const read = source.read;
+		// Bind each handler to `source`: they are methods of a CursorExecHandlers
+		// instance that reference private fields via `this`. Extracting them bare
+		// (`const read = source.read`) and calling `read(args)` would invoke them with
+		// `this === undefined`, throwing "undefined is not an object (this.#optionsForCall)".
+		const read = source.read?.bind(source);
 		if (read) {
 			guarded.read = async args => {
 				this.#assertActiveRun(runId);
@@ -689,7 +693,7 @@ export class Agent {
 				return result;
 			};
 		}
-		const ls = source.ls;
+		const ls = source.ls?.bind(source);
 		if (ls) {
 			guarded.ls = async args => {
 				this.#assertActiveRun(runId);
@@ -698,7 +702,7 @@ export class Agent {
 				return result;
 			};
 		}
-		const grep = source.grep;
+		const grep = source.grep?.bind(source);
 		if (grep) {
 			guarded.grep = async args => {
 				this.#assertActiveRun(runId);
@@ -707,7 +711,7 @@ export class Agent {
 				return result;
 			};
 		}
-		const write = source.write;
+		const write = source.write?.bind(source);
 		if (write) {
 			guarded.write = async args => {
 				this.#assertActiveRun(runId);
@@ -716,7 +720,7 @@ export class Agent {
 				return result;
 			};
 		}
-		const deleteHandler = source.delete;
+		const deleteHandler = source.delete?.bind(source);
 		if (deleteHandler) {
 			guarded.delete = async args => {
 				this.#assertActiveRun(runId);
@@ -725,7 +729,7 @@ export class Agent {
 				return result;
 			};
 		}
-		const shell = source.shell;
+		const shell = source.shell?.bind(source);
 		if (shell) {
 			guarded.shell = async args => {
 				this.#assertActiveRun(runId);
@@ -734,7 +738,7 @@ export class Agent {
 				return result;
 			};
 		}
-		const shellStream = source.shellStream;
+		const shellStream = source.shellStream?.bind(source);
 		if (shellStream) {
 			guarded.shellStream = async (args, callbacks) => {
 				this.#assertActiveRun(runId);
@@ -743,7 +747,7 @@ export class Agent {
 				return result;
 			};
 		}
-		const diagnostics = source.diagnostics;
+		const diagnostics = source.diagnostics?.bind(source);
 		if (diagnostics) {
 			guarded.diagnostics = async args => {
 				this.#assertActiveRun(runId);
@@ -752,7 +756,7 @@ export class Agent {
 				return result;
 			};
 		}
-		const mcp = source.mcp;
+		const mcp = source.mcp?.bind(source);
 		if (mcp) {
 			guarded.mcp = async call => {
 				this.#assertActiveRun(runId);

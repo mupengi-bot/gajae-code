@@ -73,7 +73,10 @@ describe("CursorExecHandlers detached invocation (#484)", () => {
 });
 
 describe("CursorExecHandlers grep empty pattern guard (#501)", () => {
-	function makeRecordingHandlers(searchCalls: Array<Record<string, unknown>>): CursorExecHandlers {
+	function makeRecordingHandlers(
+		searchCalls: Array<Record<string, unknown>>,
+		findCalls: Array<Record<string, unknown>> = [],
+	): CursorExecHandlers {
 		const searchTool = {
 			name: "search",
 			label: "search",
@@ -82,7 +85,18 @@ describe("CursorExecHandlers grep empty pattern guard (#501)", () => {
 				return { content: [{ type: "text" as const, text: "ok" }], details: {} };
 			},
 		} as unknown as AgentTool;
-		const tools = new Map<string, AgentTool>([["search", searchTool]]);
+		const findTool = {
+			name: "find",
+			label: "find",
+			execute: async (_toolCallId: string, args: Record<string, unknown>) => {
+				findCalls.push(args);
+				return { content: [{ type: "text" as const, text: "ok" }], details: {} };
+			},
+		} as unknown as AgentTool;
+		const tools = new Map<string, AgentTool>([
+			["search", searchTool],
+			["find", findTool],
+		]);
 		return new CursorExecHandlers({ cwd: process.cwd(), tools } as never);
 	}
 
@@ -104,6 +118,20 @@ describe("CursorExecHandlers grep empty pattern guard (#501)", () => {
 		const result = await handlers.grep(create(GrepArgsSchema, { pattern: "   ", path: "/tmp", toolCallId: "g" }));
 		expect(searchCalls.length).toBe(0);
 		expect(result.isError).toBe(true);
+	});
+
+	it("empty pattern with a glob is treated as native Glob and routes to find", async () => {
+		const searchCalls: Array<Record<string, unknown>> = [];
+		const findCalls: Array<Record<string, unknown>> = [];
+		const handlers = makeRecordingHandlers(searchCalls, findCalls);
+		const result = await handlers.grep(
+			create(GrepArgsSchema, { pattern: "", path: "/tmp", glob: "**/*.ts", toolCallId: "g" }),
+		);
+		expect(searchCalls.length).toBe(0);
+		expect(findCalls).toEqual([{ paths: ["/tmp/**/*.ts"] }]);
+		expect(result.role).toBe("toolResult");
+		expect(result.isError).toBeFalsy();
+		expect(result.toolName).toBe("find");
 	});
 
 	it("non-empty pattern calls search with the same searchPath behavior", async () => {

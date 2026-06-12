@@ -569,7 +569,7 @@ export const streamCursor: StreamFunction<"cursor-agent"> = (
 	return stream;
 };
 
-type ToolCallState = ToolCall & { index: number; partialJson?: string; kind: "mcp" | "todo_write" };
+type ToolCallState = ToolCall & { index: number; partialJson?: string; kind: "mcp" | "todo_write" | "native" };
 
 interface BlockState {
 	currentTextBlock: (TextContent & { index: number }) | null;
@@ -1844,6 +1844,60 @@ function buildTodoWriteArgs(toolCall: CursorUpdateTodosToolCall): {
 	};
 }
 
+// Map a cursor ToolCall oneof field name (e.g. "shellToolCall") to a display tool
+// name. Mirrors cli-jaw's cursorToolKindLabel (src/agent/events/cursor.ts) so the
+// two surfaces label cursor-native tools identically.
+const CURSOR_NATIVE_KIND_ALIASES: Record<string, string> = {
+	shell: "bash",
+	read: "read",
+	write: "write",
+	delete: "delete",
+	edit: "edit",
+	grep: "grep",
+	glob: "glob",
+	ls: "ls",
+	semSearch: "codebase_search",
+	webSearch: "web_search",
+	fetch: "fetch",
+	task: "task",
+	createPlan: "create_plan",
+	askQuestion: "ask_question",
+	readLints: "read_lints",
+	applyAgentDiff: "apply_diff",
+};
+
+function cursorNativeToolName(kindKey: string): string {
+	const base = kindKey.replace(/ToolCall$/i, "");
+	if (!base) return "tool";
+	return CURSOR_NATIVE_KIND_ALIASES[base] ?? base;
+}
+
+// Cursor's model sometimes calls its own native IDE tools (shell/glob/grep/…)
+// instead of the advertised MCP tools. Those arrive as ToolCall oneof variants we
+// do not otherwise handle (everything except mcpToolCall / updateTodosToolCall), so
+// without this they are silently dropped and never render. Build a generic toolCall
+// block from whichever *ToolCall field is set so the call (and its result) is shown.
+function buildNativeToolCallBlock(
+	toolCall: Record<string, unknown>,
+	callId: string,
+	index: number,
+): ToolCallState | null {
+	for (const [key, payload] of Object.entries(toolCall)) {
+		if (!/ToolCall$/.test(key) || !payload || typeof payload !== "object") continue;
+		if (key === "mcpToolCall" || key === "updateTodosToolCall") continue;
+		const args = (payload as { args?: unknown }).args;
+		return {
+			type: "toolCall",
+			id: callId,
+			name: cursorNativeToolName(key),
+			arguments: args && typeof args === "object" ? (args as Record<string, unknown>) : { raw: payload },
+			index,
+			kind: "native",
+		};
+	}
+	return null;
+}
+
 function buildMcpResultFromToolResult(_mcpCall: CursorMcpCall, toolResult: ToolResultMessage) {
 	if (toolResult.isError) {
 		return buildMcpErrorResult(toolResultToText(toolResult) || "MCP tool failed");
@@ -1986,6 +2040,21 @@ function processInteractionUpdate(
 				};
 				output.content.push(block);
 				state.setToolCall(block);
+				stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
+				return;
+			}
+
+			// Fallback: cursor-native tool variants (shell/glob/grep/…) we don't model
+			// explicitly. Render them so the call and its result are visible instead of
+			// vanishing.
+			const nativeBlock = buildNativeToolCallBlock(
+				toolCall,
+				update.message.value.callId || crypto.randomUUID(),
+				output.content.length,
+			);
+			if (nativeBlock) {
+				output.content.push(nativeBlock);
+				state.setToolCall(nativeBlock);
 				stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
 			}
 		}

@@ -198,7 +198,16 @@ export class CursorExecHandlers implements ICursorExecHandlers {
 
 	async grep(args: Parameters<NonNullable<ICursorExecHandlers["grep"]>>[0]) {
 		const toolCallId = decodeToolCallId(args.toolCallId);
-		if (args.pattern.trim() === "") {
+		// Cursor's native Glob tool arrives as a grep exec with a glob but no content
+		// pattern. The search tool requires a non-empty pattern, so an empty pattern
+		// means "list files matching this glob" — route that to find instead of
+		// throwing "Pattern must not be empty".
+		const pattern = typeof args.pattern === "string" ? args.pattern : "";
+		if (pattern.trim().length === 0) {
+			if (args.glob) {
+				const globPath = `${args.path || "."}/${args.glob}`;
+				return executeTool(this.#optionsForCall(), "find", toolCallId, { paths: [globPath] });
+			}
 			const result = buildToolErrorResult(
 				"Cursor grep request rejected: pattern must not be empty. Provide a non-empty search pattern.",
 			);
@@ -206,7 +215,7 @@ export class CursorExecHandlers implements ICursorExecHandlers {
 		}
 		const searchPath = args.glob ? `${args.path || "."}/${args.glob}` : args.path || ".";
 		const toolResultMessage = await executeTool(this.#optionsForCall(), "search", toolCallId, {
-			pattern: args.pattern,
+			pattern,
 			paths: [searchPath],
 			i: args.caseInsensitive || undefined,
 		});
