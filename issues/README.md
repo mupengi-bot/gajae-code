@@ -21,11 +21,11 @@ Landed + verified (consensus: Architect REQUEST CHANGES → revision → Critic 
 - **06** fixed — `gjc_rpc` `SessionState.context_usage` (`ContextUsage` model + parse).
 - **07** fixed — `gjc_rpc` typed `negotiate_unattended`/`handoff`/`login`/`get_login_providers` + models.
 - **11** fixed — `docs/rpc.md` workflow-gate section reconciled to `RpcWorkflowGate`.
+- **13** fixed — RPC stdin loop de-serialized: ordered commands run through a serial chain (causal order preserved) while `abort`/`abort_bash`/`abort_retry` run on an immediate fast lane; `abort_bash` now cancels a running `bash`; shutdown drains in-flight commands (bounded).
 - **12** already fixed on dev (`$pickenv("GJC_RPC_EMIT_TITLE","PI_RPC_EMIT_TITLE")`).
 
 Deferred (designed; tracked as follow-ups, NOT claimed fixed):
 
-- **13** serial input-loop head-of-line blocking (`abort_bash` cannot cancel a running bash) — concurrency rewrite, needs dedicated ordering/redteam tests.
 - **09** persistent/detached session, **10** session registry — architectural.
 - **08** real-binary `gjc_rpc` integration test lane.
 

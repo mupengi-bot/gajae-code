@@ -233,11 +233,19 @@ export async function runRpcMode(
 	// Shutdown request flag (wrapped in object to allow mutation with const)
 	const shutdownState = { requested: false };
 	let shutdownStarted = false;
+	// Tracks in-flight non-blocking command handlers so shutdown can drain them.
+	const inFlightCommands = new Set<Promise<void>>();
 	async function shutdown(exitCode: number, reason: string): Promise<never> {
 		if (shutdownStarted) {
 			process.exit(exitCode);
 		}
 		shutdownStarted = true;
+		// Let in-flight non-blocking commands (bash/compact/handoff) finish and emit
+		// their responses before teardown, bounded so a never-resolving login cannot
+		// wedge shutdown (issue 13).
+		if (inFlightCommands.size > 0) {
+			await Promise.race([Promise.allSettled([...inFlightCommands]), Bun.sleep(5000)]);
+		}
 		hostToolBridge.rejectAllPending(`${reason} before host tool execution completed`);
 		hostUriBridge.clear(`${reason} before host URI request completed`);
 		try {
@@ -516,6 +524,34 @@ export async function runRpcMode(
 			unattendedControlPlane,
 		});
 
+	// Cancellation commands must interrupt in-flight work, so they bypass the ordered
+	// queue and run immediately. Everything else runs through a serial chain so causal
+	// order is preserved (e.g. `get_state` after `bash` still observes the bash result)
+	// while the read loop itself never blocks — that is what lets a cancellation command
+	// reach a long-running `bash`/`compact`/`handoff`/`login` instead of being
+	// head-of-line-blocked behind it (issue 13).
+	const CANCELLATION_COMMANDS = new Set<RpcCommand["type"]>(["abort", "abort_bash", "abort_retry"]);
+	let orderedChain: Promise<void> = Promise.resolve();
+	const runCommand = async (command: RpcCommand): Promise<void> => {
+		try {
+			output(await handleCommand(command));
+		} catch (err) {
+			output(error(command.id, command.type, decodeError(err)));
+		}
+	};
+	const trackCommand = (task: Promise<void>): void => {
+		inFlightCommands.add(task);
+		void task.finally(() => inFlightCommands.delete(task));
+	};
+	const dispatchCommand = (command: RpcCommand): void => {
+		if (CANCELLATION_COMMANDS.has(command.type)) {
+			trackCommand(runCommand(command));
+			return;
+		}
+		orderedChain = orderedChain.then(() => runCommand(command));
+		trackCommand(orderedChain);
+	};
+
 	/**
 	 * Check if shutdown was requested and perform shutdown if so.
 	 * Called after handling each command when waiting for the next command.
@@ -566,10 +602,10 @@ export async function runRpcMode(
 				continue;
 			}
 
-			// Handle regular commands
-			const command = parsed as RpcCommand;
-			const response = await handleCommand(command);
-			output(response);
+			// Handle regular commands. Ordered commands run through a serial chain to
+			// preserve causal order; the read loop never blocks, so cancellation commands
+			// stay responsive even while a long command is in flight (issue 13).
+			dispatchCommand(parsed as RpcCommand);
 
 			// Check for deferred shutdown request (idle between commands)
 			await checkShutdownRequested();

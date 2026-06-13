@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { ThinkingLevel } from "@gajae-code/agent-core";
 import type { RpcCommand } from "@gajae-code/coding-agent/modes/rpc/rpc-types";
 import {
 	dispatchRpcCommand,
@@ -49,7 +50,7 @@ describe("dispatchRpcCommand validation + error correlation", () => {
 	test("applies a valid thinking level", async () => {
 		let applied: unknown;
 		const res = await dispatchRpcCommand(
-			{ id: "t2", type: "set_thinking_level", level: "high" },
+			{ id: "t2", type: "set_thinking_level", level: ThinkingLevel.High },
 			ctx({
 				setThinkingLevel: ((level: unknown) => {
 					applied = level;
@@ -57,7 +58,7 @@ describe("dispatchRpcCommand validation + error correlation", () => {
 			}),
 		);
 		expect(res.success).toBe(true);
-		expect(applied).toBe("high");
+		expect(applied).toBe(ThinkingLevel.High);
 	});
 
 	test("a handler exception is correlated to the request id and real command, not 'parse' (issue 01)", async () => {

@@ -312,4 +312,39 @@ describe("gjc --mode rpc red-team stdio lifecycle", () => {
 		expect(JSON.parse(alphaOutput)).toEqual({ lane: "alpha", cwd: alphaCwd });
 		expect(JSON.parse(betaOutput)).toEqual({ lane: "beta", cwd: betaCwd });
 	}, 30_000);
+	it("does not head-of-line-block control commands behind a running bash; abort_bash cancels it (issue 13)", async () => {
+		const harness = spawnRpcServer();
+		try {
+			expect(await harness.nextFrame()).toEqual({ type: "ready" });
+
+			// Start a long-running bash, then (after it is surely running) abort it and
+			// read state. A serial loop would queue these behind the 5s bash; the
+			// non-blocking dispatch lets abort_bash reach the in-flight bash.
+			harness.send({ id: "bash-1", type: "bash", command: "sleep 5" });
+			await Bun.sleep(400);
+			harness.send({ id: "abort-1", type: "abort_bash" });
+			harness.send({ id: "state-1", type: "get_state" });
+
+			const byId = new Map<string, Frame>();
+			const start = Date.now();
+			while (!(byId.has("bash-1") && byId.has("abort-1") && byId.has("state-1")) && Date.now() - start < 20_000) {
+				const frame = await harness.nextFrame(20_000);
+				if (frame.type === "response" && frame.id) byId.set(frame.id, frame);
+			}
+
+			// Control commands were processed while bash was still in flight.
+			expect(byId.get("abort-1")).toMatchObject({ command: "abort_bash", success: true });
+			expect(byId.get("state-1")).toMatchObject({ command: "get_state", success: true });
+
+			// abort_bash actually reached the running bash and cancelled it.
+			const bash = byId.get("bash-1");
+			expect(bash).toMatchObject({ command: "bash", success: true });
+			expect(frameData<{ cancelled: boolean }>(bash as Frame).cancelled).toBe(true);
+
+			// The whole exchange settled well under the 5s bash sleep.
+			expect(Date.now() - start).toBeLessThan(4_500);
+		} finally {
+			harness.kill();
+		}
+	}, 30_000);
 });
