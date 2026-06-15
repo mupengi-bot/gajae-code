@@ -1,6 +1,7 @@
 /**
- * Public surface of `@gajae-code/telegram-remote`. The v0 Telegram operator
- * gateway over the Coordinator MCP: lifecycle and observation only.
+ * Public surface of `@gajae-code/telegram-remote`. The Telegram operator gateway
+ * over the Coordinator MCP: lifecycle and observation only, with optional rich
+ * messaging (inline keyboards, HTML formatting, callback queries).
  */
 export { parseCommand } from "./commands";
 export { loadConfigFromEnv, type ServiceConfig } from "./config";
@@ -12,20 +13,39 @@ export {
 	activeTurnId,
 	deriveStatus,
 	deriveTurnActivity,
+	escapeHtml,
 	findSessionView,
+	projectSessionRows,
 	projectSessionSummaries,
 	projectSessionSummary,
 	projectSessionView,
+	readSessionId,
 	renderSessionsList,
+	renderSessionsListHtml,
 	renderSessionView,
+	renderSessionViewHtml,
 } from "./projection";
 export { type RunServiceOptions, runService } from "./service";
 export { type TelegramBotApiOptions, TelegramBotApiTransport } from "./telegram";
+export {
+	CALLBACK_PREFIX,
+	type CallbackAction,
+	type CallbackTokenRecord,
+	CallbackTokenStore,
+	parseCallbackData,
+} from "./tokens";
 export type {
+	CallbackAnswer,
+	CallbackAnswerOnlyReply,
+	ChatReply,
 	CoordinationStatus,
 	CoordinatorClient,
 	GatewayPreset,
+	IncomingCallbackQuery,
 	IncomingMessage,
+	IncomingTextMessage,
+	IncomingUpdate,
+	OutgoingReply,
 	ParsedCommand,
 	RawRecord,
 	ReportStatusResult,
@@ -33,6 +53,9 @@ export type {
 	SessionSummary,
 	SessionView,
 	StartSessionResult,
+	TelegramInlineKeyboardButton,
+	TelegramInlineKeyboardMarkup,
+	TelegramParseMode,
 	TelegramTransport,
 	TurnActivity,
 } from "./types";

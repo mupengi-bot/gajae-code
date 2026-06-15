@@ -1,6 +1,6 @@
 # Telegram Remote — v0 Roadmap (tiny operator button, not a cockpit)
 
-Status: **roadmap / doc-spec only** · Tracks issue #681 · Target: **0.6.0 planning** · Scope: **v0 only, no code**
+Status: **spec + reference implementation** · Tracks issue #681 · Target: **0.6.0** · Reference implementation: [`packages/telegram-remote`](../packages/telegram-remote/README.md) (incl. rich messaging; push deferred)
 
 Telegram Remote is a tiny, safe operator surface for Gajae-Code (`gjc`) session
 **lifecycle and observation** from a phone. It is deliberately **not** a remote
@@ -266,6 +266,27 @@ Each step is independently shippable; later steps stay fail-closed until wired.
 - Bridge transport / fail-closed posture (why no second protocol): [`docs/bridge.md`](bridge.md)
 - RPC command/response contract and error shapes: [`docs/rpc.md`](rpc.md)
 - v0 reference implementation (this contract, as a small companion service): [`packages/telegram-remote`](../packages/telegram-remote/README.md)
+
+## Rich messaging (implemented; push deferred)
+
+The reference implementation adds optional rich messaging (default on) as a presentation +
+alternate-entry layer, without widening the action surface or transmitted-data allowlist:
+
+- HTML formatting and inline keyboards (**Observe** / **Stop** / **Refresh** / **Confirm stop** /
+  **Cancel**), a `setMyCommands` Bot menu (`sessions`/`observe`/`stop`/`help`/`start`; the hyphenated
+  `/start-session` cannot be registered and is documented in `/help`), and `/start` onboarding.
+- Callback queries are a new authenticated input channel that reuses the **same** default-deny
+  authorization, the **same** `CoordinatorClient` → Coordinator MCP calls, and the **same**
+  redaction. `callback_data` is an opaque `gtr:v1:<token>` (≤64 bytes, never the session id) backed
+  by TTL-bound, chat/user-bound, single-use server-side token metadata holding the exact raw id.
+  Every callback is answered; unauthorized/expired/malformed/missing-chat/replayed/cancel callbacks
+  are answer-only (no chat message, no backend call).
+
+**Rich UI does not proactively notify; push notifications are deferred until a
+`gjc_coordinator_watch_events`-based design lands.** Any future push must reuse that existing
+coordinator event surface (widening `packages/coding-agent/src/coordinator-mcp/server.ts` /
+`packages/coding-agent/src/coordinator/contract.ts` only if needed) — never a Telegram-side event
+journal, status-diff poller, or shadow notification implementation.
 
 —
 *[repo owner's gaebal-gajae (clawdbot) 🦞]*

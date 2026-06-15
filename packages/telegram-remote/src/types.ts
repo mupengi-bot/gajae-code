@@ -1,9 +1,13 @@
 /**
- * Shared domain types for the v0 Telegram Remote gateway.
+ * Shared domain types for the Telegram Remote gateway.
  *
  * Tracks docs/telegram-remote.md. The gateway is a thin command + bounded-read
  * surface over the Coordinator MCP. Nothing here imports coding-agent internals;
  * the only contract with the coordinator is the {@link CoordinatorClient} port.
+ *
+ * Rich messaging (inline keyboards, callback queries, HTML formatting) is a
+ * presentation + alternate-entry layer only: it widens the transport/reply
+ * contract but never the action surface or the transmitted-data allowlist.
  */
 
 /** Opaque coordinator record. The gateway never trusts or forwards raw fields. */
@@ -49,8 +53,63 @@ export interface SessionView extends SessionSummary {
 	blockerSummary: string | null;
 }
 
-/** A message received from the Telegram transport, normalized for the gateway. */
-export interface IncomingMessage {
+/** Parsed command vocabulary. Everything outside this set is `unknown`. */
+export type ParsedCommand =
+	| { kind: "help" }
+	| { kind: "start" }
+	| { kind: "sessions" }
+	| { kind: "observe"; sessionId: string | null }
+	| { kind: "start_session"; presetId: string | null; task: string | null }
+	| { kind: "stop"; sessionId: string | null; confirm: boolean }
+	| { kind: "unknown" };
+
+// --- Rich messaging contract (presentation layer only) ---
+
+/** Only HTML parse mode is supported; escaping is simpler and safer than MarkdownV2. */
+export type TelegramParseMode = "HTML";
+
+/** One inline-keyboard button. `callbackData` is always an opaque `gtr:v1:<token>`. */
+export interface TelegramInlineKeyboardButton {
+	text: string;
+	callbackData: string;
+}
+
+/** Inline keyboard markup (rows of buttons). */
+export interface TelegramInlineKeyboardMarkup {
+	inline_keyboard: TelegramInlineKeyboardButton[][];
+}
+
+/** The toast/alert shown on a callback button press. Never leaks internal reasons. */
+export interface CallbackAnswer {
+	text?: string;
+	showAlert?: boolean;
+}
+
+/** A reply that sends (or edits) a chat message; may also answer a callback. */
+export interface ChatReply {
+	kind: "chat";
+	text: string;
+	parseMode?: TelegramParseMode;
+	replyMarkup?: TelegramInlineKeyboardMarkup;
+	edit?: { messageId: string | number };
+	callbackAnswer?: CallbackAnswer;
+}
+
+/**
+ * A callback-only reply: answer the callback, send no chat message. The guardrail
+ * for unauthorized/expired/malformed/missing-chat/used/cancel callbacks.
+ */
+export interface CallbackAnswerOnlyReply {
+	kind: "callback_answer";
+	callbackAnswer: CallbackAnswer;
+	sendMessage: false;
+}
+
+export type OutgoingReply = ChatReply | CallbackAnswerOnlyReply;
+
+/** A normalized inbound text message. */
+export interface IncomingTextMessage {
+	kind: "message";
 	/** Telegram user id; null when not present (e.g. channel posts). */
 	userId: string | null;
 	/** Telegram chat id the reply must be sent to. */
@@ -59,14 +118,22 @@ export interface IncomingMessage {
 	text: string;
 }
 
-/** Parsed command vocabulary. Everything outside this set is `unknown`. */
-export type ParsedCommand =
-	| { kind: "help" }
-	| { kind: "sessions" }
-	| { kind: "observe"; sessionId: string | null }
-	| { kind: "start_session"; presetId: string | null; task: string | null }
-	| { kind: "stop"; sessionId: string | null; confirm: boolean }
-	| { kind: "unknown" };
+/** A normalized inbound callback-query (inline-keyboard button press). */
+export interface IncomingCallbackQuery {
+	kind: "callback_query";
+	userId: string | null;
+	/** Chat id of the message the button belongs to; null when unavailable. */
+	chatId: string | null;
+	messageId: string | number | null;
+	callbackQueryId: string;
+	/** Opaque callback payload, validated as a string <=64 bytes by the transport. */
+	data: string;
+}
+
+export type IncomingUpdate = IncomingTextMessage | IncomingCallbackQuery;
+
+/** Back-compat alias: the text-message shape used by older call sites/tests. */
+export type IncomingMessage = IncomingTextMessage;
 
 /** Result of reading bounded coordination state. */
 export interface CoordinationStatus {
@@ -92,9 +159,10 @@ export interface ReportStatusResult {
 }
 
 /**
- * The only contract the gateway has with the session backend. v0 maps the
- * command vocabulary onto these bounded operations; the MCP stdio client and
- * test fakes both implement this port.
+ * The only contract the gateway has with the session backend. Both text commands
+ * and inline-keyboard callbacks map onto these same bounded operations; the MCP
+ * stdio client and test fakes both implement this port. No callback-specific
+ * control path or coordinator tool is introduced.
  */
 export interface CoordinatorClient {
 	/** Bounded, redaction-friendly cross-session read. Never raw tail/scrollback. */
@@ -114,8 +182,8 @@ export interface CoordinatorClient {
 
 /** Telegram transport port. The real adapter long-polls the Bot API. */
 export interface TelegramTransport {
-	/** Run the receive loop, replying with the handler's returned text. */
-	run(onMessage: (message: IncomingMessage) => Promise<string>): Promise<void>;
+	/** Run the receive loop, replying with the handler's returned reply. */
+	run(onUpdate: (update: IncomingUpdate) => Promise<OutgoingReply | string>): Promise<void>;
 	/** Stop the receive loop. */
 	stop(): void;
 }

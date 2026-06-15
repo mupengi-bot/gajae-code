@@ -30,8 +30,13 @@ describe("parseCommand", () => {
 		expect(parseCommand("/start_session demo")).toEqual({ kind: "unknown" });
 	});
 
+	test("/start parses to onboarding, ignoring any payload and @mention", () => {
+		expect(parseCommand("/start")).toEqual({ kind: "start" });
+		expect(parseCommand("/start@MyGjcBot")).toEqual({ kind: "start" });
+		expect(parseCommand("/start deep-link-payload")).toEqual({ kind: "start" });
+	});
+
 	test("rejects everything outside the vocabulary as unknown", () => {
-		expect(parseCommand("/start")).toEqual({ kind: "unknown" });
 		expect(parseCommand("/shell rm -rf /")).toEqual({ kind: "unknown" });
 		expect(parseCommand("/exec")).toEqual({ kind: "unknown" });
 		expect(parseCommand("hello there")).toEqual({ kind: "unknown" });

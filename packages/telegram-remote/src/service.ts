@@ -23,6 +23,8 @@ export async function runService(config: ServiceConfig, options: RunServiceOptio
 			botToken: config.botToken,
 			apiBase: config.apiBase,
 			pollTimeoutSec: config.pollTimeoutSec,
+			enableEditMessageText: config.enableEditMessageText,
+			registerBotCommands: config.registerBotCommands,
 		});
 	const gateway = new TelegramRemoteGateway(config.policy, { coordinator });
 
@@ -33,7 +35,7 @@ export async function runService(config: ServiceConfig, options: RunServiceOptio
 	process.once("SIGTERM", shutdown);
 
 	try {
-		await transport.run(message => gateway.handleMessage(message));
+		await transport.run(update => gateway.handleUpdate(update));
 	} finally {
 		process.off("SIGINT", shutdown);
 		process.off("SIGTERM", shutdown);

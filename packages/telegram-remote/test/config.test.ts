@@ -70,4 +70,31 @@ describe("loadConfigFromEnv", () => {
 			/presets_invalid_json/,
 		);
 	});
+
+	test("rich UI knobs have safe defaults and never enable questions", () => {
+		const config = loadConfigFromEnv(baseEnv());
+		expect(config.policy.enableRichMessages).toBe(true);
+		expect(config.policy.richCallbackTtlMs).toBe(600_000);
+		expect(config.policy.richCallbackMaxTokens).toBe(500);
+		expect(config.enableEditMessageText).toBe(false);
+		expect(config.registerBotCommands).toBe(true);
+		expect(config.coordinator.env.GJC_COORDINATOR_MCP_MUTATIONS).not.toContain("questions");
+	});
+
+	test("rich UI can be disabled and tuned via env", () => {
+		const config = loadConfigFromEnv(
+			baseEnv({
+				GJC_TELEGRAM_REMOTE_ENABLE_RICH: "false",
+				GJC_TELEGRAM_REMOTE_RICH_CALLBACK_TTL_MS: "120000",
+				GJC_TELEGRAM_REMOTE_RICH_CALLBACK_MAX_TOKENS: "50",
+				GJC_TELEGRAM_REMOTE_ENABLE_EDIT_MESSAGE_TEXT: "true",
+				GJC_TELEGRAM_REMOTE_REGISTER_COMMANDS: "false",
+			}),
+		);
+		expect(config.policy.enableRichMessages).toBe(false);
+		expect(config.policy.richCallbackTtlMs).toBe(120_000);
+		expect(config.policy.richCallbackMaxTokens).toBe(50);
+		expect(config.enableEditMessageText).toBe(true);
+		expect(config.registerBotCommands).toBe(false);
+	});
 });

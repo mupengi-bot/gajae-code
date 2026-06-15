@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { type GatewayPolicy, TelegramRemoteGateway } from "../src/gateway";
 import { MESSAGES, UNAUTHORIZED_REFUSAL } from "../src/messages";
-import type { CoordinationStatus } from "../src/types";
-import { FakeCoordinatorClient, message, preset, presetMap } from "./helpers";
+import type { ChatReply, CoordinationStatus, OutgoingReply, TelegramInlineKeyboardButton } from "../src/types";
+import { callback, FakeCoordinatorClient, message, preset, presetMap } from "./helpers";
 
 function liveSession(): CoordinationStatus {
 	return {
@@ -197,5 +197,146 @@ describe("unknown commands", () => {
 	test("authorized unknown command gets the boring unknown message", async () => {
 		const gateway = makeGateway();
 		expect(await gateway.handleMessage(message({ text: "/shell rm -rf /" }))).toBe(MESSAGES.unknownCommand);
+	});
+});
+
+const LONG_ID = `sess:gjc/feat-x&<unsafe>${"z".repeat(50)}`;
+
+function longStatus(): CoordinationStatus {
+	return {
+		ok: true,
+		sessions: [{ session_id: LONG_ID, branch: "main", cwd: "/secret/abs" }],
+		sessionStates: [{ session_id: LONG_ID, state: "running", live: true }],
+		turns: [{ session_id: LONG_ID, status: "active", turn_id: "turn-x" }],
+	};
+}
+
+function buttons(reply: OutgoingReply): TelegramInlineKeyboardButton[] {
+	if (reply.kind !== "chat" || !reply.replyMarkup) return [];
+	return reply.replyMarkup.inline_keyboard.flat();
+}
+
+function asChat(reply: OutgoingReply): ChatReply {
+	expect(reply.kind).toBe("chat");
+	return reply as ChatReply;
+}
+
+describe("rich messaging + callbacks", () => {
+	test("/sessions returns HTML with observe/stop buttons; callback_data is opaque and bounded", async () => {
+		coordinator.status = longStatus();
+		const gateway = makeGateway({ enableRichMessages: true });
+		const reply = asChat(await gateway.handleUpdate(message({ text: "/sessions" })));
+		expect(reply.parseMode).toBe("HTML");
+		expect(reply.text).toContain("<code>");
+		expect(reply.text).not.toContain(LONG_ID);
+		const btns = buttons(reply);
+		expect(btns.find(b => b.text.startsWith("Observe"))).toBeDefined();
+		expect(btns.find(b => b.text.startsWith("Stop"))).toBeDefined();
+		for (const b of btns) {
+			expect(Buffer.byteLength(b.callbackData, "utf8")).toBeLessThanOrEqual(64);
+			expect(b.callbackData).not.toContain(LONG_ID);
+		}
+	});
+
+	test("observe callback re-enters the read path only (no mutation)", async () => {
+		coordinator.status = longStatus();
+		const gateway = makeGateway({ enableRichMessages: true });
+		const sessions = asChat(await gateway.handleUpdate(message({ text: "/sessions" })));
+		const observe = buttons(sessions).find(b => b.text.startsWith("Observe"))!;
+		const before = coordinator.countOf("getCoordinationStatus");
+		const reply = asChat(await gateway.handleUpdate(callback({ data: observe.callbackData })));
+		expect(reply.text).toContain("status:");
+		expect(coordinator.countOf("getCoordinationStatus")).toBe(before + 1);
+		expect(coordinator.countOf("reportStatus")).toBe(0);
+	});
+
+	test("stop arm -> confirm records cancelled once with the EXACT raw session id", async () => {
+		coordinator.status = longStatus();
+		const gateway = makeGateway({ enableRichMessages: true });
+		const sessions = asChat(await gateway.handleUpdate(message({ text: "/sessions" })));
+		const stop = buttons(sessions).find(b => b.text.startsWith("Stop"))!;
+		const arm = asChat(await gateway.handleUpdate(callback({ data: stop.callbackData })));
+		expect(coordinator.countOf("reportStatus")).toBe(0);
+		const confirm = buttons(arm).find(b => b.text === "Confirm stop")!;
+		await gateway.handleUpdate(callback({ data: confirm.callbackData }));
+		expect(coordinator.countOf("reportStatus")).toBe(1);
+		expect(coordinator.calls.at(-1)?.args).toMatchObject({ sessionId: LONG_ID, status: "cancelled" });
+	});
+
+	test("replayed stop_confirm is answer-only and does not double-mutate", async () => {
+		coordinator.status = longStatus();
+		const gateway = makeGateway({ enableRichMessages: true });
+		const sessions = asChat(await gateway.handleUpdate(message({ text: "/sessions" })));
+		const stop = buttons(sessions).find(b => b.text.startsWith("Stop"))!;
+		const arm = asChat(await gateway.handleUpdate(callback({ data: stop.callbackData })));
+		const confirm = buttons(arm).find(b => b.text === "Confirm stop")!;
+		await gateway.handleUpdate(callback({ data: confirm.callbackData }));
+		const replay = await gateway.handleUpdate(callback({ data: confirm.callbackData }));
+		expect(replay.kind).toBe("callback_answer");
+		expect(coordinator.countOf("reportStatus")).toBe(1);
+	});
+
+	test("unauthorized / forwarded callback is answer-only with no backend call", async () => {
+		coordinator.status = longStatus();
+		const gateway = makeGateway({ enableRichMessages: true });
+		const sessions = asChat(await gateway.handleUpdate(message({ text: "/sessions" })));
+		const observe = buttons(sessions).find(b => b.text.startsWith("Observe"))!;
+		const before = coordinator.calls.length;
+		const reply = await gateway.handleUpdate(callback({ userId: "999", chatId: "999", data: observe.callbackData }));
+		expect(reply.kind).toBe("callback_answer");
+		if (reply.kind === "callback_answer") expect(reply.callbackAnswer.text).toBe(UNAUTHORIZED_REFUSAL);
+		expect(coordinator.calls.length).toBe(before);
+	});
+
+	test("expired token is answer-only", async () => {
+		coordinator.status = longStatus();
+		const gateway = makeGateway({ enableRichMessages: true, richCallbackTtlMs: 1000 });
+		const sessions = asChat(await gateway.handleUpdate(message({ text: "/sessions" })));
+		const observe = buttons(sessions).find(b => b.text.startsWith("Observe"))!;
+		clock = 2000; // beyond the 1000ms TTL
+		const reply = await gateway.handleUpdate(callback({ data: observe.callbackData }));
+		expect(reply.kind).toBe("callback_answer");
+		if (reply.kind === "callback_answer") expect(reply.callbackAnswer.text).toBe(MESSAGES.callbackExpired);
+	});
+
+	test("malformed callback_data and missing chat id are answer-only with no backend call", async () => {
+		coordinator.status = longStatus();
+		const gateway = makeGateway({ enableRichMessages: true });
+		const before = coordinator.calls.length;
+		const malformed = await gateway.handleUpdate(callback({ data: "not-a-token" }));
+		const missingChat = await gateway.handleUpdate(callback({ chatId: null, data: "gtr:v1:x" }));
+		expect(malformed.kind).toBe("callback_answer");
+		expect(missingChat.kind).toBe("callback_answer");
+		expect(coordinator.calls.length).toBe(before);
+	});
+
+	test("cancel callback is answer-only and invalidates the token", async () => {
+		coordinator.status = longStatus();
+		const gateway = makeGateway({ enableRichMessages: true });
+		const sessions = asChat(await gateway.handleUpdate(message({ text: "/sessions" })));
+		const stop = buttons(sessions).find(b => b.text.startsWith("Stop"))!;
+		const arm = asChat(await gateway.handleUpdate(callback({ data: stop.callbackData })));
+		const cancel = buttons(arm).find(b => b.text === "Cancel")!;
+		const confirm = buttons(arm).find(b => b.text === "Confirm stop")!;
+		const reply = await gateway.handleUpdate(callback({ data: cancel.callbackData }));
+		expect(reply.kind).toBe("callback_answer");
+		if (reply.kind === "callback_answer") expect(reply.callbackAnswer.text).toBe(MESSAGES.callbackCancelled);
+		// Cancel revokes the paired confirm token: a later Confirm must not mutate.
+		const afterConfirm = await gateway.handleUpdate(callback({ data: confirm.callbackData }));
+		expect(afterConfirm.kind).toBe("callback_answer");
+		expect(coordinator.countOf("reportStatus")).toBe(0);
+	});
+
+	test("rich /stop arm shows the capped display id (not the raw id) plus a Confirm button", async () => {
+		coordinator.status = longStatus();
+		const gateway = makeGateway({ enableRichMessages: true });
+		const arm = asChat(await gateway.handleUpdate(message({ text: `/stop ${LONG_ID}` })));
+		expect(arm.parseMode).toBe("HTML");
+		expect(arm.text).not.toContain(LONG_ID);
+		expect(buttons(arm).find(b => b.text === "Confirm stop")).toBeDefined();
+		// Confirm via the button records cancelled with the EXACT raw id.
+		const confirm = buttons(arm).find(b => b.text === "Confirm stop")!;
+		await gateway.handleUpdate(callback({ data: confirm.callbackData }));
+		expect(coordinator.calls.at(-1)?.args).toMatchObject({ sessionId: LONG_ID, status: "cancelled" });
 	});
 });

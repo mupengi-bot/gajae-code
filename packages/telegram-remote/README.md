@@ -36,8 +36,32 @@ Everything outside this vocabulary is rejected as unknown.
   bounded status enum, branch, timestamps, bounded turn/lifecycle enum, short sanitized
   blocker) leaves the PC. Raw tmux tail, transcripts, tool IO, diffs, file contents, env,
   system prompt, tokens/secrets, and absolute paths are never transmitted.
-- **Confirmation for `/stop`.** A `/stop <id>` arms; a second `/stop <id> confirm` records
-  the coordinator terminal `cancelled` status. `/stop` does **not** kill a tmux process.
+- **Confirmation for `/stop`.** A `/stop <id>` arms; a second `/stop <id> confirm` (or the
+  inline **Confirm stop** button) records the coordinator terminal `cancelled` status. `/stop`
+  does **not** kill a tmux process.
+
+## Rich messaging (optional)
+
+When `GJC_TELEGRAM_REMOTE_ENABLE_RICH` is on (default), replies use HTML formatting and inline
+keyboards as a **presentation + alternate-entry layer** — never a new action surface:
+
+- `/sessions` and `/observe` render with bold labels and `<code>` ids and carry **Observe** /
+  **Stop** / **Refresh** buttons; `/stop` and the Stop button offer **Confirm stop** / **Cancel**.
+- `/start` is friendly onboarding; the Bot command menu (`setMyCommands`) registers
+  `sessions`, `observe`, `stop`, `help`, `start` — it cannot register hyphenated `/start-session`,
+  which `/help` documents.
+- **Callbacks reuse the same surface.** Button presses re-enter the same gateway handlers and the
+  same `CoordinatorClient` → Coordinator MCP calls as text commands. No second control protocol.
+- **Callback security.** Callback queries pass the same default-deny allowlist. `callback_data` is
+  only an opaque `gtr:v1:<token>` (≤64 bytes, never the session id); the exact raw session id lives
+  in TTL-bound, chat/user-bound, single-use server-side token metadata. Unauthorized, expired,
+  malformed, missing-chat, replayed, and cancel callbacks are **answer-only** (a toast, no chat
+  message, no backend call). Every callback is answered (`answerCallbackQuery`).
+- **No push notifications.** Rich UI does **not** proactively notify; check with `/sessions` or the
+  Refresh button. Push is deferred until a `gjc_coordinator_watch_events`-based design lands — it
+  must reuse that existing event surface, not a Telegram-side poller.
+
+Set `GJC_TELEGRAM_REMOTE_ENABLE_RICH=false` to fall back to plain text.
 
 ## Run it
 
@@ -65,6 +89,11 @@ long-polls the Telegram Bot API. See `.env.example` for every variable.
 | `GJC_TELEGRAM_REMOTE_ALLOWED_CHAT_IDS` | Comma-separated allowlist of chat ids. At least one allowlist is required. |
 | `GJC_TELEGRAM_REMOTE_PRESETS` | JSON array of presets (`id`, `workdir`, `sessionCommand`, `taskTemplate?`, `taskMaxLen?`). |
 | `GJC_TELEGRAM_REMOTE_ENABLE_STOP` | `true`/`1`/`yes` to enable `/stop` (adds the `reports` mutation class). |
+| `GJC_TELEGRAM_REMOTE_ENABLE_RICH` | Enable HTML + inline keyboards (default `true`; `false` for plain text). |
+| `GJC_TELEGRAM_REMOTE_RICH_CALLBACK_TTL_MS` | TTL for observe/refresh/arm callback tokens (default `600000`). |
+| `GJC_TELEGRAM_REMOTE_RICH_CALLBACK_MAX_TOKENS` | Max in-memory callback tokens (default `500`). |
+| `GJC_TELEGRAM_REMOTE_ENABLE_EDIT_MESSAGE_TEXT` | Refresh `/observe` in place via `editMessageText` (default `false`; falls back to a new message). |
+| `GJC_TELEGRAM_REMOTE_REGISTER_COMMANDS` | Register the Bot command menu at startup (default `true`). |
 | `GJC_TELEGRAM_REMOTE_DEFAULT_TASK_MAX_LEN` | Default per-preset task cap (default `2000`). |
 | `GJC_TELEGRAM_REMOTE_POLL_TIMEOUT_SEC` | Bot API long-poll timeout (default `30`). |
 | `GJC_TELEGRAM_REMOTE_API_BASE` | Override the Telegram API base URL. |
@@ -80,6 +109,8 @@ never enabled.
 
 ## Status
 
-v0, roadmap scope. Lifecycle + observation only; no submit surface and no remote teardown.
-See [`docs/telegram-remote.md`](../../docs/telegram-remote.md) for the full contract,
-deferred decisions, and non-goals.
+v0, roadmap scope. Lifecycle + observation only; no submit surface and no remote teardown. Optional
+rich messaging (inline keyboards, HTML, callback queries) is a presentation + alternate-entry layer
+over the same Coordinator MCP surface; push notifications are deferred until a
+`gjc_coordinator_watch_events`-based design lands. See [`docs/telegram-remote.md`](../../docs/telegram-remote.md)
+for the full contract, deferred decisions, and non-goals.

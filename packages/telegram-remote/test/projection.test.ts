@@ -3,10 +3,14 @@ import {
 	activeTurnId,
 	deriveStatus,
 	deriveTurnActivity,
+	escapeHtml,
 	findSessionView,
+	projectSessionRows,
 	projectSessionSummaries,
 	renderSessionsList,
+	renderSessionsListHtml,
 	renderSessionView,
+	renderSessionViewHtml,
 } from "../src/projection";
 import type { CoordinationStatus, RawRecord } from "../src/types";
 
@@ -148,5 +152,48 @@ describe("transmitted-data allowlist (redaction)", () => {
 	test("activeTurnId returns the coordinator turn id for /stop", () => {
 		expect(activeTurnId(coordination, "sess-1")).toBe("turn-1");
 		expect(activeTurnId(coordination, "missing")).toBeNull();
+	});
+});
+
+describe("HTML rendering (rich mode) escaping + exact raw id", () => {
+	test("escapeHtml neutralizes parse-mode metacharacters", () => {
+		expect(escapeHtml(`<b>&"x"`)).toBe(`&lt;b&gt;&amp;"x"`);
+	});
+
+	test("rendered HTML escapes hostile projected fields and leaks no raw fields", () => {
+		const hostile = status({
+			sessions: [
+				{
+					session_id: "sess-1",
+					repo: "<script>",
+					branch: "<img src=x>",
+					cwd: "/secret/abs",
+					prompt: "PROMPT_LEAK",
+				},
+			],
+			sessionStates: [{ session_id: "sess-1", state: "errored", live: true, reason: "<b>boom</b>" }],
+			turns: [{ session_id: "sess-1", status: "waiting_for_answer", turn_id: "t" }],
+		});
+		const summaries = projectSessionSummaries(hostile);
+		const view = findSessionView(hostile, "sess-1");
+		const rendered = `${renderSessionsListHtml(summaries)}\n${view ? renderSessionViewHtml(view) : ""}`;
+		expect(rendered).not.toContain("<script>");
+		expect(rendered).not.toContain("<img");
+		expect(rendered).toContain("&lt;");
+		expect(rendered).not.toContain("PROMPT_LEAK");
+		expect(rendered).not.toContain("/secret/abs");
+	});
+
+	test("projectSessionRows keeps the exact raw id while the display summary stays capped", () => {
+		const rawId = `sess:${"y".repeat(80)}`;
+		const rows = projectSessionRows(
+			status({
+				sessions: [{ session_id: rawId, branch: "main" }],
+				sessionStates: [{ session_id: rawId, state: "running", live: true }],
+			}),
+		);
+		expect(rows[0]?.rawSessionId).toBe(rawId);
+		expect(rows[0]?.summary.sessionId.length).toBeLessThanOrEqual(48);
+		expect(rows[0]?.summary.sessionId).not.toBe(rawId);
 	});
 });

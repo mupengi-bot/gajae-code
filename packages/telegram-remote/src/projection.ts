@@ -222,3 +222,56 @@ export function renderSessionView(view: SessionView): string {
 	}
 	return lines.join("\n");
 }
+
+/** Escape a dynamic value for Telegram HTML parse mode (`&`, `<`, `>`). */
+export function escapeHtml(value: string): string {
+	return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Read the exact raw coordinator session_id from a record (never truncated). */
+export function readSessionId(record: RawRecord): string | null {
+	return readString(record, "session_id");
+}
+
+/**
+ * Project sessions into ordered rows pairing the EXACT raw session_id (for opaque
+ * callback tokens / coordinator calls) with the allowlisted display summary (for
+ * rendering). Display ids stay escaped/capped; the raw id never reaches chat.
+ */
+export function projectSessionRows(
+	status: CoordinationStatus,
+): Array<{ rawSessionId: string; summary: SessionSummary }> {
+	const rows: Array<{ rawSessionId: string; summary: SessionSummary }> = [];
+	for (const session of status.sessions) {
+		const rawSessionId = readSessionId(session);
+		const summary = projectSessionSummary(session, status.sessionStates, status.turns);
+		if (rawSessionId && summary) rows.push({ rawSessionId, summary });
+	}
+	return rows;
+}
+
+/** Render the allowlisted summaries as HTML (presentation only; same fields). */
+export function renderSessionsListHtml(summaries: SessionSummary[]): string {
+	if (summaries.length === 0) return escapeHtml(MESSAGES.noSessions);
+	const rows = summaries.map(summary => {
+		const branch = summary.branch ? ` · ${escapeHtml(summary.branch)}` : "";
+		return `• <b>${escapeHtml(summary.name)}</b> · ${escapeHtml(summary.status)}${branch}\n  <code>${escapeHtml(summary.sessionId)}</code>`;
+	});
+	return `<b>Sessions</b>\n${rows.join("\n")}`;
+}
+
+/** Render the allowlisted open-session view as HTML (presentation only; same fields). */
+export function renderSessionViewHtml(view: SessionView): string {
+	const lines = [
+		`<b>${escapeHtml(view.name)}</b>`,
+		`id: <code>${escapeHtml(view.sessionId)}</code>`,
+		`status: <b>${escapeHtml(view.status)}</b>`,
+		`turn: ${escapeHtml(view.activeTurn)}`,
+		`branch: ${view.branch ? escapeHtml(view.branch) : MESSAGES.withheld}`,
+		`last: ${view.lastActivityAt ? escapeHtml(view.lastActivityAt) : MESSAGES.withheld}`,
+	];
+	if (view.status === "blocked") {
+		lines.push(`blocked: ${view.blockerSummary ? escapeHtml(view.blockerSummary) : MESSAGES.withheld}`);
+	}
+	return lines.join("\n");
+}

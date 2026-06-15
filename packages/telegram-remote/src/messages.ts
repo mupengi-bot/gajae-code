@@ -23,6 +23,28 @@ export const MESSAGES = {
 		"/help — show this message",
 	].join("\n"),
 
+	// Onboarding for the Telegram-conventional /start command (authorized senders).
+	start: [
+		"Gajae-Code Telegram remote.",
+		"",
+		"A tiny, safe operator surface for session lifecycle and observation.",
+		"Use the buttons under /sessions, or these commands:",
+		"",
+		"/sessions — list live/recent sessions",
+		"/observe <sessionId> — bounded status for one session",
+		"/start-session <presetId> [task] — start a session from an approved preset",
+		"/stop <sessionId> — request a graceful stop (confirm required)",
+		"/help — show the command set",
+		"",
+		"Note: this remote does not proactively notify; check with /sessions or the refresh button.",
+	].join("\n"),
+
+	// Callback toast answers (kept generic; never leak internal reasons).
+	callbackDone: "Done.",
+	callbackExpired: "Expired — send /sessions again.",
+	callbackInvalid: "That button is no longer valid.",
+	callbackCancelled: "Cancelled.",
+
 	// Usage hints (authorized senders, malformed arguments).
 	startUsage: "Usage: /start-session <presetId> [task]",
 	observeUsage: "Usage: /observe <sessionId>",

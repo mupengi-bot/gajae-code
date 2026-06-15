@@ -32,6 +32,9 @@ export function parseCommand(text: string): ParsedCommand {
 	switch (command) {
 		case "help":
 			return { kind: "help" };
+		case "start":
+			// Telegram-conventional onboarding command; payload (if any) is ignored.
+			return { kind: "start" };
 		case "sessions":
 			return { kind: "sessions" };
 		case "observe":

@@ -18,6 +18,10 @@ export interface ServiceConfig {
 	botToken: string;
 	apiBase?: string;
 	pollTimeoutSec: number;
+	/** Honor reply.edit via editMessageText (transport). Default false. */
+	enableEditMessageText: boolean;
+	/** Register the Bot command menu at startup (transport). Default true. */
+	registerBotCommands: boolean;
 	policy: GatewayPolicy;
 	coordinator: McpStdioOptions;
 }
@@ -138,6 +142,16 @@ function isTruthy(value: string | undefined): boolean {
 	return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
+function isTruthyDefault(value: string | undefined, fallback: boolean): boolean {
+	if (value === undefined || value.trim().length === 0) return fallback;
+	return isTruthy(value);
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+	const parsed = Number.parseInt(value ?? "", 10);
+	return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 /** Build the full service config from environment variables. */
 export function loadConfigFromEnv(env: Env): ServiceConfig {
 	const botToken = required(env, "GJC_TELEGRAM_REMOTE_BOT_TOKEN");
@@ -154,14 +168,23 @@ export function loadConfigFromEnv(env: Env): ServiceConfig {
 	const presets = parsePresets(env.GJC_TELEGRAM_REMOTE_PRESETS, taskMaxLen);
 	const enableStop = isTruthy(env.GJC_TELEGRAM_REMOTE_ENABLE_STOP);
 
-	const pollTimeout = Number.parseInt(env.GJC_TELEGRAM_REMOTE_POLL_TIMEOUT_SEC ?? "", 10);
-	const pollTimeoutSec = Number.isInteger(pollTimeout) && pollTimeout > 0 ? pollTimeout : 30;
+	const pollTimeoutSec = parsePositiveInt(env.GJC_TELEGRAM_REMOTE_POLL_TIMEOUT_SEC, 30);
 
 	return {
 		botToken,
 		apiBase: env.GJC_TELEGRAM_REMOTE_API_BASE?.trim() || undefined,
 		pollTimeoutSec,
-		policy: { allowedUserIds, allowedChatIds, presets, enableStop },
+		enableEditMessageText: isTruthyDefault(env.GJC_TELEGRAM_REMOTE_ENABLE_EDIT_MESSAGE_TEXT, false),
+		registerBotCommands: isTruthyDefault(env.GJC_TELEGRAM_REMOTE_REGISTER_COMMANDS, true),
+		policy: {
+			allowedUserIds,
+			allowedChatIds,
+			presets,
+			enableStop,
+			enableRichMessages: isTruthyDefault(env.GJC_TELEGRAM_REMOTE_ENABLE_RICH, true),
+			richCallbackTtlMs: parsePositiveInt(env.GJC_TELEGRAM_REMOTE_RICH_CALLBACK_TTL_MS, 600_000),
+			richCallbackMaxTokens: parsePositiveInt(env.GJC_TELEGRAM_REMOTE_RICH_CALLBACK_MAX_TOKENS, 500),
+		},
 		coordinator: {
 			command: env.GJC_TELEGRAM_REMOTE_COORDINATOR_COMMAND?.trim() || DEFAULT_COORDINATOR_COMMAND,
 			args: parseList(env.GJC_TELEGRAM_REMOTE_COORDINATOR_ARGS, DEFAULT_COORDINATOR_ARGS),
