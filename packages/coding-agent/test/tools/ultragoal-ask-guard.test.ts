@@ -63,6 +63,25 @@ function stubAskTool(execute: () => Promise<void>): AgentTool {
 	};
 }
 
+// Mirrors ExtensionToolWrapper: a prototype `execute` that reads instance state via
+// `this`. A detached call (`const exec = tool.execute; exec()`) loses `this` and throws
+// "undefined is not an object (evaluating 'this.runner')".
+class StubExtensionWrappedAskTool {
+	name = "ask";
+	label = "Ask";
+	summary = "Ask";
+	description = "Ask";
+	parameters = {} as never;
+	strict = true;
+	runner = { hasHandlers: () => false };
+	executeArgs: unknown[] | null = null;
+	async execute(...args: unknown[]): Promise<{ content: { type: "text"; text: string }[]; details: object }> {
+		this.runner.hasHandlers();
+		this.executeArgs = args;
+		return { content: [{ type: "text", text: "asked" }], details: {} };
+	}
+}
+
 describe("ultragoal ask guard", () => {
 	it("allows ask when durable ultragoal state is absent", async () => {
 		const cwd = await tempDir();
@@ -82,6 +101,18 @@ describe("ultragoal ask guard", () => {
 			/record-review-blockers/,
 		);
 		expect(execute).not.toHaveBeenCalled();
+	});
+
+	it("preserves `this` for a prototype-method ask tool when ultragoal is inactive (regression)", async () => {
+		const cwd = await tempDir();
+		const tool = new StubExtensionWrappedAskTool();
+		const guarded = guardToolForUltragoalAsk(tool as unknown as AgentTool, () => cwd);
+
+		// Must not throw "undefined is not an object (evaluating 'this.runner')".
+		const result = await guarded.execute("call", { foo: 1 }, undefined, undefined, undefined as never);
+
+		expect(result.content[0]).toMatchObject({ type: "text", text: "asked" });
+		expect(tool.executeArgs).toEqual(["call", { foo: 1 }, undefined, undefined, undefined]);
 	});
 
 	it("blocks an unwrapped AskTool before prompting while ultragoal is active", async () => {

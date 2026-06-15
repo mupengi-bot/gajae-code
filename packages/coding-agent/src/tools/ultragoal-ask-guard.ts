@@ -30,10 +30,7 @@ export function guardToolForUltragoalAsk<T extends AgentTool>(tool: T, getCwd: (
 			if (prop !== "execute") return Reflect.get(target, prop, receiver);
 			return async (...args: Parameters<T["execute"]>): Promise<Awaited<ReturnType<T["execute"]>>> => {
 				await assertUltragoalAskAllowed(getCwd());
-				const exec = target.execute as unknown as (
-					...executeArgs: Parameters<T["execute"]>
-				) => Promise<Awaited<ReturnType<T["execute"]>>>;
-				return exec(...args);
+				return target.execute(...args) as Promise<Awaited<ReturnType<T["execute"]>>>;
 			};
 		},
 	}) as T & GuardedTool;
