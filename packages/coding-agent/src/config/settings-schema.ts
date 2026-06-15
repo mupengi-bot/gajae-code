@@ -2220,6 +2220,25 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"linuxComputerUse.enabled": {
+		type: "boolean",
+		default: true,
+		ui: {
+			tab: "tools",
+			label: "Linux Computer Use",
+			description: "Enable the linux_computer_use tool for local LCU/Xvfb/noVNC desktop targets",
+		},
+	},
+
+	"linuxComputerUse.baseUrl": {
+		type: "string",
+		default: "http://127.0.0.1:8765",
+		ui: {
+			tab: "tools",
+			label: "Linux Computer Use URL",
+			description: "Default HTTP API base URL for a Linux Computer Use target",
+		},
+	},
 	// Tool execution
 	"tools.intentTracing": {
 		type: "boolean",

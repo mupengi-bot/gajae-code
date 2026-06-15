@@ -19,6 +19,10 @@
 
 - Interactive sessions no longer orphan the `browser` tool's headless/spawned Chrome (and the Python eval kernel) to PID 1 when killed by a signal. The interactive entry now registers a bounded, idempotent `postmortem` cleanup (`session-subprocess-teardown`) that runs `AgentSession.disposeChildSubprocesses()` on `SIGINT`/`SIGTERM`/`SIGHUP`, force-releasing the session's browser tabs (`kill:true`) and disposing its Python/JS kernels — the teardown the graceful `/quit` (`dispose()`) path already performs but that an external `kill`/terminal-close used to bypass. Headless `disposeBrowserHandle` now also SIGTERM/SIGKILLs the captured Chrome process tree as a fallback when forced, so a wedged renderer can't survive a bounded CDP `close()`; graceful release behavior is unchanged. The teardown is time-boxed (5s) so a stuck subprocess can't hang process exit (#698).
 
+### Added
+
+- Added a draft `linux_computer_use` tool that bridges GJC to a local Linux Computer Use HTTP target for Xvfb/noVNC desktop observe/action loops.
+
 ## [0.5.2] - 2026-06-15
 
 ### Fixed
