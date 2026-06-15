@@ -162,11 +162,11 @@ export function buildExpandedWindow(
 		flat.push({ kind: "monitor", id: m.id, text: monitorRowText(m, nowMs, width) });
 		const lines = (tailByMonitorId[m.id] ?? []).slice(-TAIL_MAX_LINES_PER_MONITOR);
 		for (const line of lines) {
-			const rendered = `    ${line}`;
+			// Tail content only; the component indents tail rows under their monitor.
 			flat.push({
 				kind: "monitor-tail",
 				id: m.id,
-				text: width !== undefined ? previewText(rendered, width) : rendered,
+				text: width !== undefined ? previewText(line, width) : line,
 			});
 		}
 	}

@@ -175,7 +175,10 @@ export class ActiveJobsPanelComponent extends Container {
 		const lines: string[] = [
 			`Active jobs — expanded (${shownStart}-${shownEnd} of ${win.totalRows}) ${indicators} ctrl+↓ collapse`,
 		];
-		for (const row of win.visibleRows) lines.push(`  ${row.text}`);
+		for (const row of win.visibleRows) {
+			// Nest live-tail rows under their monitor with a deeper indent + marker.
+			lines.push(row.kind === "monitor-tail" ? `    ↳ ${row.text}` : `  ${row.text}`);
+		}
 		return lines;
 	}
 
