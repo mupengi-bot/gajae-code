@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-06-15
+
 ### Fixed
 
 - Prevented closed stderr descriptors from crashing shutdown diagnostics while preserving unexpected stderr write failures.

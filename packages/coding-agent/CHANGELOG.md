@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-06-15
+
 ### Fixed
 
 - Prevented `gjc --tmux` partial-launch diagnostics from throwing when stderr is already closed during shutdown.
