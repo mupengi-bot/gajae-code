@@ -208,4 +208,30 @@ describe("gjc state doctor", () => {
 			}),
 		]);
 	});
+
+	it("detects active-entry phase drift from live ralplan mode-state", async () => {
+		const root = await tempDir();
+		await writeStampedState(root, "ralplan", {
+			active: true,
+			current_phase: "final",
+			run_id: "doctor-run",
+		});
+		const activeEntryPath = path.join(root, ".gjc", "state", "active", "ralplan.json");
+		await writeJson(activeEntryPath, { skill: "ralplan", active: true, phase: "revision" });
+		await writeJson(path.join(root, ".gjc", "state", "audit.jsonl"), { seeded: true });
+
+		const result = await runDoctorUnchanged(root, ["doctor", "--skill", "ralplan", "--json"]);
+		expect(result.status).toBe(1);
+		const parsed = JSON.parse(result.stdout ?? "{}");
+		expect(parsed.problems).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					type: "stale_active_state",
+					skill: "ralplan",
+					path: activeEntryPath,
+					fixCommand: `gjc state ralplan write --input '${JSON.stringify({ current_phase: "final" })}'`,
+				}),
+			]),
+		);
+	});
 });

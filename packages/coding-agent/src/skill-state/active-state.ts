@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import {
 	type ActiveSessionScope,
+	readActiveEntries,
 	rebuildActiveSnapshot,
 	removeActiveEntry,
 	writeActiveEntry,
@@ -253,6 +254,11 @@ function entryKey(entry: Pick<SkillActiveEntry, "skill" | "session_id">): string
 	return `${entry.skill}::${safeString(entry.session_id).trim()}`;
 }
 
+function normalizedEntryPhase(record: Record<string, unknown>): string | undefined {
+	const phase = safeString(record.phase).trim() || safeString(record.current_phase).trim();
+	return phase || undefined;
+}
+
 function normalizeEntry(raw: unknown): SkillActiveEntry | null {
 	if (!raw || typeof raw !== "object") return null;
 	const record = raw as Record<string, unknown>;
@@ -264,7 +270,7 @@ function normalizeEntry(raw: unknown): SkillActiveEntry | null {
 	return {
 		...record,
 		skill,
-		phase: safeString(record.phase).trim() || undefined,
+		phase: normalizedEntryPhase(record),
 		active: record.active !== false,
 		activated_at: safeString(record.activated_at).trim() || undefined,
 		updated_at: safeString(record.updated_at).trim() || undefined,
@@ -416,9 +422,9 @@ function rawActiveEntries(state: SkillActiveState | null): SkillActiveEntry[] {
 	return out;
 }
 
-function filterRootEntriesForSession(entries: SkillActiveEntry[], sessionId?: string): SkillActiveEntry[] {
+function filterRootEntriesForSession(entries: readonly SkillActiveEntry[], sessionId?: string): SkillActiveEntry[] {
 	const normalizedSessionId = safeString(sessionId).trim();
-	if (!normalizedSessionId) return entries;
+	if (!normalizedSessionId) return [...entries];
 	return entries.filter(entry => {
 		const entrySessionId = safeString(entry.session_id).trim();
 		return entrySessionId.length === 0 || entrySessionId === normalizedSessionId;
@@ -538,28 +544,57 @@ export function collapsePlanningPipeline(entries: readonly SkillActiveEntry[]): 
 	return entries.filter(entry => !PLANNING_PIPELINE_SKILLS.has(entry.skill) || entry === current);
 }
 
+function normalizeEntryList(entries: readonly SkillActiveEntry[]): SkillActiveEntry[] {
+	return entries.map(entry => normalizeEntry(entry)).filter((entry): entry is SkillActiveEntry => entry !== null);
+}
+
+async function readActiveEntryFiles(
+	cwd: string,
+	sessionScope?: string | ActiveSessionScope,
+): Promise<SkillActiveEntry[]> {
+	try {
+		return normalizeEntryList(await readActiveEntries(cwd, sessionScope));
+	} catch {
+		return [];
+	}
+}
+
 function mergeVisibleEntries(
 	sessionState: SkillActiveState | null,
 	rootState: SkillActiveState | null,
-	sessionId?: string,
+	sessionId: string | undefined,
+	rootActiveEntries: readonly SkillActiveEntry[] = [],
+	sessionActiveEntries: readonly SkillActiveEntry[] = [],
 ): SkillActiveEntry[] {
 	// Use the raw (active + inactive) rows so a handoff demotion stays visible
 	// long enough to supersede a stale same-skill row before the active filter.
-	const rootEntries = filterRootEntriesForSession(rawActiveEntries(rootState), sessionId);
-	const merged = new Map(rootEntries.map(entry => [entryKey(entry), entry]));
-	for (const entry of rawActiveEntries(sessionState)) {
-		merged.set(entryKey(entry), entry);
-	}
+	// Per-skill files under `.gjc/state/active/` are authoritative; the adjacent
+	// `skill-active-state.json` snapshot is a derived cache and must not win when
+	// a crash or older writer leaves it stale.
+	const merged = new Map<string, SkillActiveEntry>();
+	const put = (entry: SkillActiveEntry) => merged.set(entryKey(entry), entry);
+	for (const entry of filterRootEntriesForSession(rawActiveEntries(rootState), sessionId)) put(entry);
+	for (const entry of filterRootEntriesForSession(rootActiveEntries, sessionId)) put(entry);
+	for (const entry of rawActiveEntries(sessionState)) put(entry);
+	for (const entry of sessionActiveEntries) put(entry);
 	return dedupeVisibleBySkill([...merged.values()], sessionId).filter(entry => entry.active !== false);
 }
 
 export async function readVisibleSkillActiveState(cwd: string, sessionId?: string): Promise<SkillActiveState | null> {
 	const { rootPath, sessionPath } = getSkillActiveStatePaths(cwd, sessionId);
-	const [rootState, sessionState] = await Promise.all([
+	const [rootState, sessionState, rootActiveEntries, sessionActiveEntries] = await Promise.all([
 		readRawActiveStateForHandoff(rootPath, false),
 		sessionPath ? readRawActiveStateForHandoff(sessionPath, false) : Promise.resolve(null),
+		readActiveEntryFiles(cwd),
+		sessionId ? readActiveEntryFiles(cwd, { sessionId }) : Promise.resolve([]),
 	]);
-	const activeSkills = mergeVisibleEntries(sessionState, rootState, sessionId);
+	const activeSkills = mergeVisibleEntries(
+		sessionState,
+		rootState,
+		sessionId,
+		rootActiveEntries,
+		sessionActiveEntries,
+	);
 	if (activeSkills.length === 0) return null;
 	const primary = activeSkills[0];
 	return {
@@ -618,11 +653,19 @@ async function activeSubskillsForExistingEntry(
 	skill: string,
 ): Promise<ActiveSubskillEntry[] | undefined> {
 	const { rootPath, sessionPath } = getSkillActiveStatePaths(cwd, sessionId);
-	const [rootState, sessionState] = await Promise.all([
+	const [rootState, sessionState, rootActiveEntries, sessionActiveEntries] = await Promise.all([
 		readRawActiveStateForHandoff(rootPath, false),
 		sessionPath ? readRawActiveStateForHandoff(sessionPath, false) : Promise.resolve(null),
+		readActiveEntryFiles(cwd),
+		sessionId ? readActiveEntryFiles(cwd, { sessionId }) : Promise.resolve([]),
 	]);
-	const existing = mergeVisibleEntries(sessionState, rootState, sessionId).find(entry => entry.skill === skill);
+	const existing = mergeVisibleEntries(
+		sessionState,
+		rootState,
+		sessionId,
+		rootActiveEntries,
+		sessionActiveEntries,
+	).find(entry => entry.skill === skill);
 	return existing?.active_subskills;
 }
 

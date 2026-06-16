@@ -13,6 +13,7 @@ import {
 } from "./ledger-event-renderer";
 import { isRestrictedRoleAgentBash } from "./restricted-role-agent-bash";
 import { migrateWorkflowState } from "./state-migrations";
+import { runNativeStateCommand } from "./state-runtime";
 import {
 	appendJsonlIdempotent,
 	readExistingStateForMutation,
@@ -23,7 +24,7 @@ import {
 /**
  * Native implementation of `gjc ralplan`.
  *
- * Two invocation shapes are handled natively:
+ * Three invocation shapes are handled natively:
  *
  * 1. **Consensus handoff**: `gjc ralplan [--interactive] [--deliberate] [--architect <kind>]
  *    [--critic <kind>] [--session-id <id>] "<task>"` validates the documented flag surface,
@@ -37,6 +38,10 @@ import {
  *    / Critic / revision / ADR / final markdown under `.gjc/plans/ralplan/<run-id>/`, maintains
  *    an `index.jsonl` audit log, copies `final` stages to `pending-approval.md`, and advances
  *    the HUD chip to reflect the latest persisted stage.
+ *
+ * 3. **Doctor**: `gjc ralplan doctor [--json] [--session-id <id>]` delegates to
+ *    `gjc state doctor --skill ralplan` so RALPLAN-specific active/HUD cache drift is
+ *    reported without starting a new planning run.
  */
 
 export interface RalplanCommandResult {
@@ -102,6 +107,53 @@ function hasFlag(args: readonly string[], flag: string): boolean {
 
 export function isRalplanArtifactWriteInvocation(args: readonly string[]): boolean {
 	return hasFlag(args, "--write");
+}
+function firstPositionalArg(args: readonly string[]): string | undefined {
+	let skipNext = false;
+	for (const arg of args) {
+		if (skipNext) {
+			skipNext = false;
+			continue;
+		}
+		if (VALUE_FLAGS.has(arg)) {
+			skipNext = true;
+			continue;
+		}
+		if (!arg.startsWith("-")) return arg;
+	}
+	return undefined;
+}
+
+function isRalplanDoctorInvocation(args: readonly string[]): boolean {
+	return firstPositionalArg(args) === "doctor";
+}
+
+function ralplanDoctorStateArgs(args: readonly string[]): string[] {
+	const stateArgs = ["doctor", "--skill", "ralplan"];
+	let skipNext = false;
+	for (const arg of args) {
+		if (skipNext) {
+			skipNext = false;
+			continue;
+		}
+		if (arg === "doctor") continue;
+		if (arg === "--json") {
+			stateArgs.push("--json");
+			continue;
+		}
+		if (arg === "--session-id") {
+			const sessionId = flagValue(args, "--session-id")?.trim();
+			if (sessionId) {
+				assertSafePathComponent(sessionId, "session-id");
+				stateArgs.push("--session-id", sessionId);
+			}
+			skipNext = true;
+			continue;
+		}
+		if (arg.startsWith("-")) throw new RalplanCommandError(2, `unknown flag for gjc ralplan doctor: ${arg}`);
+		throw new RalplanCommandError(2, `unexpected argument for gjc ralplan doctor: ${arg}`);
+	}
+	return stateArgs;
 }
 
 function assertSafePathComponent(value: string, label: string): void {
@@ -215,13 +267,31 @@ function advanceCurrentPhase(existingPhase: unknown, stage: RalplanStage): strin
 	if (current && PHASE_LOCK.has(current)) return current;
 	return stage;
 }
+interface RalplanRunStateSnapshot {
+	active: boolean;
+	currentPhase: string;
+	runId: string;
+}
+
+function ralplanRunStateSnapshot(
+	state: Record<string, unknown>,
+	fallbackRunId: string,
+	fallbackPhase: string,
+): RalplanRunStateSnapshot {
+	const currentPhase =
+		typeof state.current_phase === "string" && state.current_phase.trim()
+			? state.current_phase.trim()
+			: fallbackPhase;
+	const runId = typeof state.run_id === "string" && state.run_id.trim() ? state.run_id.trim() : fallbackRunId;
+	return { active: state.active !== false, currentPhase, runId };
+}
 
 async function persistActiveRunId(
 	cwd: string,
 	sessionId: string | undefined,
 	runId: string,
 	stage: RalplanStage,
-): Promise<void> {
+): Promise<RalplanRunStateSnapshot> {
 	const statePath = ralplanStatePath(cwd, sessionId);
 	const existingRead = await readExistingStateForMutation(statePath);
 	if (existingRead.kind === "corrupt") {
@@ -243,7 +313,7 @@ async function persistActiveRunId(
 		existing.current_phase === nextPhase &&
 		(existing.active === true || PHASE_LOCK.has(nextPhase))
 	) {
-		return;
+		return ralplanRunStateSnapshot(existing, runId, nextPhase);
 	}
 	existing.run_id = runId;
 	if (typeof existing.skill !== "string") existing.skill = "ralplan";
@@ -258,6 +328,7 @@ async function persistActiveRunId(
 		receipt: { cwd, skill: "ralplan", owner: "gjc-runtime", command: "gjc ralplan persist-run-id", sessionId },
 		audit: { category: "state", verb: "write", owner: "gjc-runtime", skill: "ralplan" },
 	});
+	return ralplanRunStateSnapshot(existing, runId, nextPhase);
 }
 
 /* --------------------------- planner run-state --------------------------- */
@@ -584,12 +655,13 @@ async function syncRalplanHud(options: {
 	iteration?: number;
 	runId?: string;
 	latestSummary?: string;
+	active?: boolean;
 }): Promise<void> {
 	try {
 		await syncSkillActiveState({
 			cwd: options.cwd,
 			skill: "ralplan",
-			active: !options.pendingApproval || options.stage === "final",
+			active: options.active ?? (!options.pendingApproval || options.stage === "final"),
 			phase: options.stage,
 			sessionId: options.sessionId,
 			source: "gjc-ralplan-native",
@@ -649,20 +721,25 @@ async function handleArtifactWrite(args: readonly string[], cwd: string): Promis
 		return buildDeduplicatedResult(resolved, existingArtifact, sha256, cwd);
 	}
 
-	// Keep run-state `current_phase` coherent with the stage being persisted.
-	await persistActiveRunId(cwd, resolved.sessionId, resolved.runId, resolved.stage);
+	// Keep run-state `current_phase` coherent with the stage being persisted. The
+	// returned phase is canonical for HUD too: locked terminal phases (notably
+	// `final`/`handoff`) must not be visually reopened by a stray older stage write.
+	const runState = await persistActiveRunId(cwd, resolved.sessionId, resolved.runId, resolved.stage);
 	const persisted = await persistArtifact(resolved, cwd, content, sha256);
 	if (plannerState) {
 		await applyPlannerStateUpdate(cwd, resolved.sessionId, plannerState);
 	}
+	const hudStage = runState.currentPhase || persisted.stage;
 	await syncRalplanHud({
 		cwd,
 		sessionId: resolved.sessionId,
-		stage: persisted.stage,
-		runId: persisted.runId,
-		pendingApproval: persisted.stage === "final",
-		iteration: persisted.stageN,
-		latestSummary: `persisted ${persisted.stage} stage ${persisted.stageN}`,
+		stage: hudStage,
+		runId: runState.runId,
+		active: runState.active,
+		pendingApproval: hudStage === "final",
+		iteration: hudStage === persisted.stage ? persisted.stageN : undefined,
+		latestSummary:
+			hudStage === persisted.stage ? `persisted ${persisted.stage} stage ${persisted.stageN}` : `${hudStage} phase`,
 	});
 	const payload: Record<string, unknown> = {
 		run_id: persisted.runId,
@@ -858,6 +935,7 @@ async function handleConsensusHandoff(args: readonly string[], cwd: string): Pro
 
 export async function runNativeRalplanCommand(args: string[], cwd = process.cwd()): Promise<RalplanCommandResult> {
 	try {
+		if (isRalplanDoctorInvocation(args)) return await runNativeStateCommand(ralplanDoctorStateArgs(args), cwd);
 		if (isRalplanArtifactWriteInvocation(args)) return await handleArtifactWrite(args, cwd);
 		return await handleConsensusHandoff(args, cwd);
 	} catch (error) {

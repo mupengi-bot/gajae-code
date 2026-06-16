@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed RALPLAN HUD/status reconciliation so stale derived active-state snapshots cannot show `ralplan:revision` after the canonical run state reaches `final`, and `gjc ralplan doctor` reports active/HUD phase drift.
+
 ## [0.5.3] - 2026-06-16
 
 ### Added

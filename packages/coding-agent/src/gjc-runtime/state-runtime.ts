@@ -449,6 +449,31 @@ function skillFromActiveValue(value: unknown): string | undefined {
 function activeFlag(value: unknown): boolean {
 	return isPlainObject(value) && value.active !== false;
 }
+function phaseFromActiveValue(value: unknown): string | undefined {
+	if (!isPlainObject(value)) return undefined;
+	const phase = typeof value.phase === "string" ? value.phase.trim() : "";
+	const currentPhase = typeof value.current_phase === "string" ? value.current_phase.trim() : "";
+	return phase || currentPhase || undefined;
+}
+
+function phaseFromModeState(value: unknown): string | undefined {
+	if (!isPlainObject(value)) return undefined;
+	const currentPhase = typeof value.current_phase === "string" ? value.current_phase.trim() : "";
+	const phase = typeof value.phase === "string" ? value.phase.trim() : "";
+	return currentPhase || phase || undefined;
+}
+
+async function hasModeStateIntegrityMismatch(filePath: string): Promise<boolean> {
+	try {
+		return Boolean(await detectWorkflowEnvelopeIntegrityMismatch(filePath));
+	} catch {
+		return true;
+	}
+}
+
+function phaseRepairCommand(skill: CanonicalGjcWorkflowSkill, phase: string): string {
+	return `gjc state ${skill} write --input '${JSON.stringify({ current_phase: phase })}'`;
+}
 
 async function collectDoctorSummary(
 	cwd: string,
@@ -531,11 +556,13 @@ async function collectDoctorSummary(
 		if (snapshot.exists) filesScanned += 1;
 		const entryFiles = await listJsonFiles(activeEntryDir(cwd, scopeSessionId));
 		const entrySkills = new Set<string>();
+		const rawEntriesBySkill = new Map<string, { path: string; value: unknown }>();
 		for (const entryPath of entryFiles) {
 			filesScanned += 1;
 			const entry = await readRawJson(entryPath);
 			const entrySkill = skillFromActiveValue(entry.value) ?? path.basename(entryPath, ".json");
 			entrySkills.add(entrySkill);
+			rawEntriesBySkill.set(entrySkill, { path: entryPath, value: entry.value });
 			const canonical = canonicalWorkflowSkill(entrySkill);
 			if (canonical && !skills.includes(canonical)) continue;
 			const statePath = canonical
@@ -550,6 +577,28 @@ async function collectDoctorSummary(
 						`active entry for ${entrySkill} does not match a live active mode-state`,
 						canonical ? `gjc state ${canonical} clear` : "gjc state prune --hard",
 						canonical ?? undefined,
+					),
+				);
+			}
+			const entryPhase = phaseFromActiveValue(entry.value);
+			const statePhase = phaseFromModeState(state.value);
+			const stateIntegrityMismatch = canonical ? await hasModeStateIntegrityMismatch(statePath) : false;
+			if (
+				canonical &&
+				!stateIntegrityMismatch &&
+				activeFlag(entry.value) &&
+				activeFlag(state.value) &&
+				entryPhase &&
+				statePhase &&
+				entryPhase !== statePhase
+			) {
+				problems.push(
+					doctorProblem(
+						"stale_active_state",
+						entryPath,
+						`active entry for ${entrySkill} reports phase ${entryPhase} but live mode-state current_phase is ${statePhase}`,
+						phaseRepairCommand(canonical, statePhase),
+						canonical,
 					),
 				);
 			}
@@ -568,6 +617,27 @@ async function collectDoctorSummary(
 							snapshotPath,
 							`active snapshot lists ${entrySkill} but no raw per-skill active entry exists`,
 							canonical ? `gjc state ${canonical} clear` : "gjc state prune --hard",
+							canonical ?? undefined,
+						),
+					);
+				}
+				const rawEntry = rawEntriesBySkill.get(entrySkill);
+				const snapshotPhase = phaseFromActiveValue(entry);
+				const rawPhase = phaseFromActiveValue(rawEntry?.value);
+				if (
+					rawEntry &&
+					activeFlag(entry) &&
+					activeFlag(rawEntry.value) &&
+					snapshotPhase &&
+					rawPhase &&
+					snapshotPhase !== rawPhase
+				) {
+					problems.push(
+						doctorProblem(
+							"stale_active_state",
+							snapshotPath,
+							`active snapshot lists ${entrySkill} phase ${snapshotPhase} but raw active entry ${rawEntry.path} reports ${rawPhase}`,
+							canonical ? phaseRepairCommand(canonical, rawPhase) : "gjc state prune --hard",
 							canonical ?? undefined,
 						),
 					);

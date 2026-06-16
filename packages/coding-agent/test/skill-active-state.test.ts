@@ -118,6 +118,30 @@ describe("GJC skill-active state", () => {
 		});
 	});
 
+	it("prefers raw per-skill active entries over stale snapshot cache", async () => {
+		await withTempCwd(async cwd => {
+			const stateRoot = path.join(cwd, ".gjc", "state");
+			await fs.mkdir(path.join(stateRoot, "active"), { recursive: true });
+			await fs.writeFile(
+				path.join(stateRoot, "skill-active-state.json"),
+				JSON.stringify({
+					version: 1,
+					active: true,
+					skill: "ralplan",
+					phase: "revision",
+					active_skills: [{ skill: "ralplan", active: true, phase: "revision" }],
+				}),
+			);
+			await fs.writeFile(
+				path.join(stateRoot, "active", "ralplan.json"),
+				JSON.stringify({ skill: "ralplan", active: true, current_phase: "final" }),
+			);
+
+			const visible = await readVisibleSkillActiveState(cwd);
+			expect(visible?.active_skills?.[0]).toMatchObject({ skill: "ralplan", phase: "final" });
+		});
+	});
+
 	it("normalizes and preserves HUD summaries during root/session merge", async () => {
 		await withTempCwd(async cwd => {
 			await syncSkillActiveState({

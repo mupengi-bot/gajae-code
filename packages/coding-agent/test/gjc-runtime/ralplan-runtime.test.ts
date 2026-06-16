@@ -3,6 +3,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { runNativeRalplanCommand } from "@gajae-code/coding-agent/gjc-runtime/ralplan-runtime";
 import { GJC_RESTRICTED_ROLE_AGENT_BASH_ENV } from "@gajae-code/coding-agent/gjc-runtime/restricted-role-agent-bash";
+import { readVisibleSkillActiveState } from "@gajae-code/coding-agent/skill-state/active-state";
+import { renderSkillHudBar } from "../../src/modes/components/skill-hud/render";
 
 const tempRoots: string[] = [];
 
@@ -397,6 +399,65 @@ describe("native gjc ralplan runtime — run-state phase coherence", () => {
 			root,
 		);
 		expect(await readPhase(root)).toBe("final");
+	});
+
+	it("does not let stale revision HUD cache override a final run state", async () => {
+		const root = await tempDir();
+		await runNativeRalplanCommand(["--deliberate", "--json", "task"], root);
+		const runId = (
+			JSON.parse(await fs.readFile(path.join(root, ".gjc", "state", "ralplan-state.json"), "utf-8")) as {
+				run_id: string;
+			}
+		).run_id;
+
+		await runNativeRalplanCommand(
+			["--write", "--stage", "final", "--stage_n", "6", "--artifact", "# final", "--run-id", runId],
+			root,
+		);
+		await fs.writeFile(
+			path.join(root, ".gjc", "state", "skill-active-state.json"),
+			JSON.stringify({
+				version: 1,
+				active: true,
+				skill: "ralplan",
+				phase: "revision",
+				active_skills: [
+					{
+						skill: "ralplan",
+						active: true,
+						phase: "revision",
+						updated_at: "2026-06-15T22:21:44.200Z",
+						hud: {
+							version: 1,
+							summary: "persisted revision stage 4",
+							chips: [{ label: "stage", value: "revision", priority: 10 }],
+						},
+					},
+				],
+			}),
+			"utf-8",
+		);
+
+		let active = await readVisibleSkillActiveState(root);
+		let rendered = Bun.stripANSI(renderSkillHudBar(active?.active_skills ?? [], 200) ?? "");
+		expect(rendered).toContain("ralplan:final");
+		expect(rendered).not.toContain("ralplan:revision");
+		const staleDoctor = await runNativeRalplanCommand(["doctor", "--json"], root);
+		expect(staleDoctor.status).toBe(1);
+		expect(staleDoctor.stdout).toContain("stale_active_state");
+
+		const strayRevision = await runNativeRalplanCommand(
+			["--write", "--stage", "revision", "--stage_n", "7", "--artifact", "# late revision", "--run-id", runId],
+			root,
+		);
+		expect(strayRevision.status).toBe(0);
+		active = await readVisibleSkillActiveState(root);
+		rendered = Bun.stripANSI(renderSkillHudBar(active?.active_skills ?? [], 200) ?? "");
+		expect(rendered).toContain("ralplan:final");
+		expect(rendered).not.toContain("ralplan:revision");
+
+		const doctor = await runNativeRalplanCommand(["doctor", "--json"], root);
+		expect(doctor.status).toBe(0);
 	});
 
 	it("does not regress a handed-off run-state phase on a stray --write (chain guard intact)", async () => {
