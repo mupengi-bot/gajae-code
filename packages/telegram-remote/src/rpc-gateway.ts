@@ -60,6 +60,9 @@ export class TelegramRpcGateway {
 		this.#control = new RpcControlStateMachine({
 			backend: this.#backend,
 			onSignal: signal => {
+				if (signal.kind === "reconnect_required") {
+					console.warn("gtr_rpc_gateway_reconnect", { reason: signal.reason, queued: signal.queuedInputs });
+				}
 				if (signal.kind === "reconnect_required" || this.#lastControlSignal?.kind !== "reconnect_required") {
 					this.#lastControlSignal = signal;
 				}

@@ -8,9 +8,14 @@
  *
  *   bun packages/telegram-remote/examples/safety-smoke.ts
  */
+import { unlink } from "node:fs/promises";
+import type { AgentMessage } from "@gajae-code/agent-core";
 import { TelegramRemoteGateway } from "../src/gateway";
 import { UNAUTHORIZED_REFUSAL } from "../src/messages";
 import { TelegramRemoteNotifier } from "../src/notifier";
+import { RpcAttachmentStore } from "../src/rpc-attachment-store";
+import { FakeRpcBackend } from "../src/rpc-backend";
+import { TelegramRpcGateway } from "../src/rpc-gateway";
 import { SubscriptionStore } from "../src/subscriptions";
 import type {
 	ChatReply,
@@ -272,10 +277,226 @@ async function pushNotifierInvariants(): Promise<void> {
 	assert(!rendered.includes(LONG_ID), "raw id absent from push smoke output");
 }
 
+type RpcSend = { chatId: string; reply: ChatReply };
+type WorkflowGate = Parameters<FakeRpcBackend["emitWorkflowGate"]>[0];
+
+function rpcGateway(deps: {
+	backend: FakeRpcBackend;
+	store: RpcAttachmentStore;
+	sends: RpcSend[];
+	send?: (message: RpcSend) => Promise<{ ok: boolean; retryAfterMs?: number }>;
+	now?: () => number;
+}): TelegramRpcGateway {
+	return new TelegramRpcGateway(
+		{
+			allowedUserIds: new Set(["100"]),
+			allowedChatIds: new Set(),
+			defaultSocketPath: "/tmp/whatever.sock",
+			allowAttachSocketArg: false,
+		},
+		{
+			backend: deps.backend,
+			attachments: deps.store,
+			outbound: {
+				send:
+					deps.send ??
+					(async message => {
+						deps.sends.push(message);
+						return { ok: true };
+					}),
+			},
+			now: deps.now ?? (() => 1_000_000),
+		},
+	);
+}
+
+function rpcStorePath(label: string): string {
+	return `/tmp/gtr-rpc-smoke-${process.pid}-${label}.json`;
+}
+
+async function loadRpcStore(label: string): Promise<RpcAttachmentStore> {
+	const filePath = rpcStorePath(label);
+	await unlink(filePath).catch(() => undefined);
+	return RpcAttachmentStore.load({ filePath });
+}
+
+function assertNoRpcMutation(backend: FakeRpcBackend, message: string): void {
+	assert(backend.countOf("prompt") === 0 && backend.countOf("steer") === 0, message);
+}
+
+function assertNoForbiddenLeak(text: string, label: string): void {
+	for (const secret of FORBIDDEN) assert(!text.includes(secret), `${label} leaked ${secret}`);
+	assert(!text.includes("HOSTILE<&>ID"), `${label} leaked hostile id`);
+}
+
+async function flushRpc(): Promise<void> {
+	for (let i = 0; i < 5; i += 1) await new Promise(resolve => setTimeout(resolve, 0));
+}
+
+function assistantMessage(message: Record<string, unknown>): AgentMessage {
+	return message as unknown as AgentMessage;
+}
+
+async function rpcInvariants(): Promise<void> {
+	const cleanupPaths: string[] = [];
+	try {
+		const store = await loadRpcStore("main");
+		cleanupPaths.push(rpcStorePath("main"));
+		const backend = new FakeRpcBackend();
+		const sends: RpcSend[] = [];
+		const gateway = rpcGateway({ backend, store, sends });
+
+		for (const command of ["/sessions", "/observe x", "/presets", "/start-session demo x", "/stop x"]) {
+			const reply = asChat(await gateway.handleUpdate(msg("100", command)));
+			assert(
+				reply.text === "Unknown command. Send /help for the command set.",
+				`RPC rejected coordinator command: ${command}`,
+			);
+		}
+		assertNoRpcMutation(backend, "RPC coordinator browsing did not prompt/steer");
+
+		const intruderStore = await loadRpcStore("intruder");
+		cleanupPaths.push(rpcStorePath("intruder"));
+		const intruderBackend = new FakeRpcBackend();
+		const intruderSends: RpcSend[] = [];
+		const intruderGateway = rpcGateway({ backend: intruderBackend, store: intruderStore, sends: intruderSends });
+		assert(
+			asChat(await intruderGateway.handleUpdate(msg("999", "/attach"))).text === UNAUTHORIZED_REFUSAL,
+			"intruder attach refused",
+		);
+		assert(
+			asChat(await intruderGateway.handleUpdate(msg("999", "hello"))).text === UNAUTHORIZED_REFUSAL,
+			"intruder text refused",
+		);
+		const intruderCallback = await intruderGateway.handleUpdate(cb("999", "999", "gtr:v1:opaque"));
+		assert(intruderCallback.kind === "callback_answer", "intruder callback answer-only");
+		assert(
+			intruderCallback.kind === "callback_answer" && intruderCallback.callbackAnswer.text === UNAUTHORIZED_REFUSAL,
+			"intruder callback boring refusal",
+		);
+		assert(intruderBackend.calls.length === 0, "intruder triggered zero backend operations");
+
+		await gateway.handleUpdate(msg("100", "/attach"));
+		const hostileGate: WorkflowGate = {
+			type: "workflow_gate",
+			gate_id: "HOSTILE<&>ID",
+			stage: "ralplan",
+			kind: "approval",
+			schema: { type: "string" },
+			schema_hash: "hash",
+			context: { title: "HOSTILE<&>ID", prompt: "Approve HOSTILE<&>ID?" },
+			options: [{ label: "Approve HOSTILE<&>ID", value: "HOSTILE<&>ID" }],
+			created_at: "2026-06-16T00:00:00Z",
+			required: true,
+		};
+		backend.emitWorkflowGate(hostileGate);
+		await flushRpc();
+		const gateSend = sends.find(send => send.reply.replyMarkup?.inline_keyboard.flat().length);
+		assert(!!gateSend, "workflow gate rendered a button");
+		for (const button of gateSend!.reply.replyMarkup!.inline_keyboard.flat()) {
+			assert(button.callbackData.startsWith("gtr:v1:"), "RPC callback_data is opaque token");
+			assert(Buffer.byteLength(button.callbackData, "utf8") <= 64, "RPC callback_data <=64 bytes");
+			assert(!button.callbackData.includes("HOSTILE<&>ID"), "RPC callback_data excludes hostile id");
+		}
+
+		const beforeFinal = sends.length;
+		const finalText = `<script>&" ${"x".repeat(8200)}`;
+		backend.messages = [
+			assistantMessage({
+				role: "assistant",
+				content: finalText,
+				index: 1,
+				turnId: "turn-final",
+				timestamp: "2026-06-16T00:00:00Z",
+			}),
+		];
+		backend.emitEvent({ type: "turn_end" });
+		await flushRpc();
+		const finalSends = sends.slice(beforeFinal);
+		assert(finalSends.length >= 2, "long final answer chunked");
+		const renderedFinal = finalSends.map(send => send.reply.text).join("\n");
+		assert(!renderedFinal.includes("<script>"), "final answer HTML escaped script tag");
+		assert(
+			renderedFinal.includes("&lt;script&gt;") && renderedFinal.includes("&amp;"),
+			"final answer contains HTML entities",
+		);
+		for (const send of finalSends) {
+			assert(Buffer.byteLength(send.reply.text, "utf8") <= 4096, "final chunk <=4096 bytes");
+			assertNoForbiddenLeak(send.reply.text, "RPC final answer");
+		}
+
+		const failStore = await loadRpcStore("fail");
+		cleanupPaths.push(rpcStorePath("fail"));
+		const failBackend = new FakeRpcBackend();
+		const failSends: RpcSend[] = [];
+		let failFirst = true;
+		const failGateway = rpcGateway({
+			backend: failBackend,
+			store: failStore,
+			sends: failSends,
+			send: async message => {
+				failSends.push(message);
+				if (failFirst) {
+					failFirst = false;
+					return { ok: false, retryAfterMs: 1000 };
+				}
+				return { ok: true };
+			},
+		});
+		await failGateway.handleUpdate(msg("100", "/attach"));
+		failBackend.messages = [assistantMessage({ role: "assistant", content: "failed chunk", index: 1 })];
+		failBackend.emitEvent({ type: "turn_end" });
+		await flushRpc();
+		assert(
+			failSends.some(send => send.reply.text.includes("Final answer delivery paused")),
+			"failed chunk visible",
+		);
+		assert(!!failStore.get()?.chunkProgress?.failedAt, "failed chunk progress persisted");
+		await failGateway.handleUpdate(msg("100", "/detach"));
+
+		const beforeDetach = sends.length;
+		await gateway.handleUpdate(msg("100", "/detach"));
+		backend.messages = [assistantMessage({ role: "assistant", content: "after detach", index: 2 })];
+		backend.emitEvent({ type: "turn_end" });
+		await flushRpc();
+		assert(sends.length === beforeDetach, "detach suppresses later delivery");
+
+		const replayStore = await loadRpcStore("replay");
+		cleanupPaths.push(rpcStorePath("replay"));
+		const replayBackend = new FakeRpcBackend();
+		const replaySends: RpcSend[] = [];
+		replayBackend.pendingWorkflowGates = [hostileGate];
+		// Seed a persisted non-stale attachment so restorePersistedAttachment exercises the real
+		// startup restore path (allowlist re-check + reconnect + pending-gate replay), not /attach.
+		await replayStore.set({
+			chatId: "100",
+			userId: "100",
+			socketPath: "/tmp/whatever.sock",
+			stale: false,
+			pendingGateIds: [],
+			deliveryIdentities: [],
+			updatedAt: 1_000_000,
+		});
+		const replayGateway = rpcGateway({ backend: replayBackend, store: replayStore, sends: replaySends });
+		await replayGateway.restorePersistedAttachment();
+		await flushRpc();
+		assert(replayBackend.countOf("connect") === 1, "restore reconnected to the persisted socket");
+		assert(
+			replaySends.some(send => send.reply.replyMarkup?.inline_keyboard.flat().length),
+			"pending gate replay rendered button on restore",
+		);
+		await replayGateway.handleUpdate(msg("100", "/detach"));
+		process.stdout.write("telegram-remote-rpc-safety-ok\n");
+	} finally {
+		await Promise.all(cleanupPaths.map(path => unlink(path).catch(() => undefined)));
+	}
+}
+
 async function main(): Promise<void> {
 	await plainInvariants();
 	await richCallbackInvariants();
 	await pushNotifierInvariants();
+	await rpcInvariants();
 	process.stdout.write("telegram-remote-safety-ok\n");
 }
 

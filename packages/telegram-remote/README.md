@@ -63,6 +63,36 @@ keyboards as a **presentation + alternate-entry layer** — never a new action s
 
 Set `GJC_TELEGRAM_REMOTE_ENABLE_RICH=false` to fall back to plain text.
 
+## RPC mode (single persistent session)
+
+Set `GJC_TELEGRAM_REMOTE_BACKEND=rpc` to make the gateway dial one existing
+owner-only UNIX socket exposed by `gjc launch --output rpc`. The gateway never
+spawns, kills, or tears down that session; it is only a Telegram attach/detach
+remote keyboard for the already-running RPC-mode session.
+
+RPC mode exposes only `/attach`, `/detach`, `/status`, `/abort`, `/help`, and
+`/start`. Coordinator browsing and lifecycle commands are not available:
+`/sessions`, `/observe`, `/presets`, `/start-session`, and `/stop` are rejected
+as unknown in RPC mode. When Bot command registration is enabled, the menu
+advertises only the RPC command set.
+
+The RPC surface is event-driven: agent questions and gates render as inline
+buttons; turn-complete delivery sends only the final assistant text, HTML-escaped
+and chunked to Telegram's 4096-byte message limit; session exit or liveness
+timeout sends exactly one stale-attachment alert.
+
+The socket OS-ownership boundary is the real security boundary. Same-UID clients
+are fully trusted in v1; protection is for different-UID users and unsafe
+filesystem placement. Controller ownership is last-connected-wins: a later UDS
+client becomes current, old-socket writes are ignored or time out, and the
+gateway alerts once, reconnects, and resyncs.
+
+RPC knobs: `GJC_TELEGRAM_REMOTE_BACKEND=rpc`,
+`GJC_TELEGRAM_REMOTE_RPC_SOCKET=/path/to/gjc-rpc.sock`,
+`GJC_TELEGRAM_REMOTE_STATE_DIR=/path/to/state` (required in RPC mode for
+reconnect/resync), `GJC_TELEGRAM_REMOTE_LIVENESS_MS=60000`, and
+`GJC_TELEGRAM_REMOTE_ALLOW_ATTACH_SOCKET_ARG=false`. See `.env.example`.
+
 ## Run it
 
 ```sh

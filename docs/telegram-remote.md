@@ -288,5 +288,26 @@ coordinator event surface (widening `packages/coding-agent/src/coordinator-mcp/s
 `packages/coding-agent/src/coordinator/contract.ts` only if needed) — never a Telegram-side event
 journal, status-diff poller, or shadow notification implementation.
 
+## RPC mode (second backend)
+
+The package also supports a second backend, `GJC_TELEGRAM_REMOTE_BACKEND=rpc`,
+for a single persistent session. In this mode the gateway dials an existing
+owner-only UNIX socket exposed by `gjc launch --output rpc`; it never spawns,
+kills, or tears down the session. Telegram acts as an attach/detach remote
+keyboard with `/attach`, `/detach`, `/status`, `/abort`, and `/help`/`/start`.
+Coordinator browsing commands (`/sessions`, `/observe`, `/presets`,
+`/start-session`, `/stop`) are not part of RPC mode and are rejected as unknown.
+
+RPC delivery is event-driven: agent questions and gates render as inline buttons,
+and turn completion sends only the final assistant text, HTML-escaped and
+Telegram-chunked. Session exit or liveness timeout produces exactly one
+stale-attachment alert. The socket's OS ownership is the real boundary: same-UID
+clients are fully trusted in v1, while protection targets different-UID users and
+unsafe filesystem placement. Controller ownership is last-connected-wins; a later
+UDS client becomes current, the gateway alerts once, reconnects, and resyncs.
+See [`packages/telegram-remote/README.md`](../packages/telegram-remote/README.md)
+and [`packages/telegram-remote/.env.example`](../packages/telegram-remote/.env.example)
+for RPC knobs.
+
 —
 *[repo owner's gaebal-gajae (clawdbot) 🦞]*

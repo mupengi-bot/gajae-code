@@ -61,6 +61,7 @@ export class RpcBackend implements RpcBackendPort {
 		this.#unsubscribeExtensionUi = client.onExtensionUiRequest(request => this.#emitExtensionUi(request));
 		this.#unsubscribeWorkflowGate = client.onWorkflowGate(gate => this.#emitWorkflowGate(gate));
 		await client.start();
+		console.warn("gtr_rpc_backend_connect", { socket: "set" });
 		this.#client = client;
 		this.#connected = true;
 	}
@@ -173,11 +174,13 @@ export class RpcBackend implements RpcBackendPort {
 	}
 
 	#emitTransportError(error: Error): void {
+		console.warn("gtr_rpc_backend_disconnect", { reason: "transport_error" });
 		this.#connected = false;
 		for (const listener of this.#transportErrorListeners) listener(error);
 	}
 
 	#emitCommandIgnored(error: Error): void {
+		console.warn("gtr_rpc_backend_controller_lost", {});
 		this.#connected = false;
 		for (const listener of this.#commandIgnoredListeners) listener(error);
 	}
