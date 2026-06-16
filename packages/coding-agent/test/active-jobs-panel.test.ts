@@ -236,4 +236,61 @@ describe("ActiveJobsPanelComponent", () => {
 		expect(panel.render(80)).toEqual([]);
 		panel.dispose();
 	});
+	test("auto-hide returns focus to the editor when all jobs vanish while expanded", () => {
+		const { panel, focus } = makePanel(snap({ crons: [cron({ id: "pr" })] }));
+		panel.onExpandUp();
+		expect(panel.isExpanded()).toBe(true);
+		expect(focus.self).toBe(1);
+		panel.setSnapshot(snap()); // all jobs gone via observer churn
+		expect(panel.isVisible()).toBe(false);
+		expect(panel.isExpanded()).toBe(false);
+		expect(focus.editor).toBe(1); // focus restored without needing Esc
+		expect(panel.render(80)).toEqual([]);
+		panel.dispose();
+	});
+
+	test("selection reconciles and stays on-screen after the selected job disappears", () => {
+		const monitors = Array.from({ length: 5 }, (_, i) => mon({ id: `m${i}`, status: "running", startTime: NOW - i }));
+		const { panel } = makePanel(snap({ monitors }));
+		panel.setMaxRows(4);
+		panel.onExpandUp(); // selects m0
+		for (let i = 0; i < 4; i++) panel.onCollapseDown(); // move to m4
+		expect(panel.selectedRef()).toEqual({ kind: "monitor", id: "m4" });
+		// drop the selected job (and the tail of the list), keep m0..m2 visible
+		panel.setSnapshot(snap({ monitors: monitors.slice(0, 3) }));
+		const sel = panel.selectedRef();
+		expect(sel).toBeDefined();
+		expect(["m0", "m1", "m2"]).toContain(sel?.id);
+		// the reconciled selection is scrolled on-screen (a › marker is rendered)
+		expect(panel.render(120).join("\n")).toContain("›");
+		panel.dispose();
+	});
+
+	test("TTL expiry while expanded collapses and restores editor focus", async () => {
+		let nowValue = NOW;
+		const expiring = mon({ id: "done", status: "completed", endTime: NOW - (COMPLETED_MONITOR_VISIBLE_MS - 60) });
+		const snapshot = snap({ monitors: [expiring] });
+		const controller = makeController(snapshot);
+		const focus = { self: 0, editor: 0 };
+		const panel = new ActiveJobsPanelComponent(controller, {
+			requestRender: () => {},
+			now: () => nowValue,
+			focusSelf: () => {
+				focus.self++;
+			},
+			focusEditor: () => {
+				focus.editor++;
+			},
+		});
+		panel.setSnapshot(snapshot);
+		panel.onExpandUp();
+		expect(panel.isExpanded()).toBe(true);
+		nowValue = NOW + 200; // past the completed TTL
+		await new Promise(resolve => setTimeout(resolve, 160));
+		expect(panel.isVisible()).toBe(false);
+		expect(panel.isExpanded()).toBe(false);
+		expect(focus.editor).toBeGreaterThan(0);
+		expect(panel.render(80)).toEqual([]);
+		panel.dispose();
+	});
 });

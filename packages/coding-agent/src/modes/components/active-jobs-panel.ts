@@ -94,16 +94,35 @@ export class ActiveJobsPanelComponent extends Container {
 		this.#syncTimers();
 	}
 
-	/** Update the data snapshot; collapses + clears tails when nothing is visible. */
+	/** Update the data snapshot, then reconcile visibility/selection/focus/timers. */
 	setSnapshot(snapshot: JobsSnapshot): void {
 		this.#snapshot = snapshot;
-		if (!this.isVisible()) {
-			this.#collapseState();
+		this.#reconcileAfterChange();
+		this.#requestRender();
+	}
+
+	/**
+	 * Single reconcile path shared by snapshot updates and the TTL/label timer.
+	 * If the panel is no longer visible it auto-hides (and returns focus to the
+	 * editor when it had focus); if it is visible and expanded it keeps the
+	 * selection valid and on-screen. Always re-syncs timers.
+	 */
+	#reconcileAfterChange(): void {
+		const now = this.#now();
+		if (!hasVisibleJobs(this.#snapshot, now)) {
+			this.#autoHide();
 		} else if (this.#expanded) {
 			this.#reconcileSelection();
+			this.#ensureSelectedVisible(now);
 		}
 		this.#syncTimers();
-		this.#requestRender();
+	}
+
+	/** Collapse because nothing is visible, returning focus to the editor if we held it. */
+	#autoHide(): void {
+		const hadFocus = this.#expanded || this.focused;
+		this.#collapseState();
+		if (hadFocus) this.#focusEditor?.();
 	}
 
 	/** Tighten the max panel height (interactive-mode feeds this from terminal rows). */
@@ -318,11 +337,13 @@ export class ActiveJobsPanelComponent extends Container {
 			this.#labelTimer = undefined;
 		}
 		// Live-tail poll only while expanded with at least one visible monitor row.
-		const wantTail = visible && this.#expanded;
+		const hasMonitors = visible && filterVisibleJobs(this.#snapshot, this.#now()).monitors.length > 0;
+		const wantTail = hasMonitors && this.#expanded;
 		if (wantTail && !this.#tailTimer) {
 			this.#tailTimer = setInterval(() => {
 				if (this.#disposed) return;
 				this.#pollVisibleTails();
+				if (this.#expanded) this.#ensureSelectedVisible(this.#now());
 				this.#requestRender();
 			}, TAIL_POLL_MS);
 			this.#tailTimer.unref?.();
@@ -352,13 +373,13 @@ export class ActiveJobsPanelComponent extends Container {
 	#scheduleLabelRefresh(): void {
 		const delay = this.#nextRefreshDelay(this.#now());
 		this.#labelTimer = setTimeout(() => {
-			this.#labelTimer = undefined;
 			if (this.#disposed) return;
-			// Always redraw at the boundary: if this deadline expired the last
-			// visible job, the render clears the panel. Only keep the timer
-			// running while something remains visible.
+			this.#labelTimer = undefined;
+			// At the boundary, reconcile through the shared path: this collapses +
+			// restores editor focus if the last job just expired, keeps the
+			// selection valid otherwise, and re-arms timers (including this one).
+			this.#reconcileAfterChange();
 			this.#requestRender();
-			if (this.isVisible()) this.#scheduleLabelRefresh();
 		}, delay);
 		this.#labelTimer.unref?.();
 	}
