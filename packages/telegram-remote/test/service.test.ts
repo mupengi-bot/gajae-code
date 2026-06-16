@@ -185,7 +185,7 @@ test("RPC mode restores persisted attachment and replays pending gate on startup
 	);
 
 	expect(rpcBackend.calls).toContainEqual({ method: "connect", args: "/tmp/restored.sock" });
-	expect(rpcBackend.countOf("getPendingWorkflowGates")).toBe(1);
+	expect(rpcBackend.countOf("getPendingWorkflowGates")).toBe(2);
 	expect(transport.outbound).toHaveLength(1);
 	expect(transport.outbound[0].chatId).toBe("100");
 	expect(transport.outbound[0].reply.text).toContain("Approve restored gate?");

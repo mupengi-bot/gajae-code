@@ -21,6 +21,8 @@ export interface TelegramBotApiOptions {
 	enableEditMessageText?: boolean;
 	/** Register the Bot command menu at startup (non-fatal). Default true. */
 	registerBotCommands?: boolean;
+	/** Override the registered Bot command menu. */
+	botCommands?: Array<{ command: string; description: string }>;
 	/** Injectable fetch for tests. */
 	fetchImpl?: typeof fetch;
 }
@@ -37,11 +39,20 @@ interface TelegramUpdate {
 }
 
 /** BotFather command menu — only [a-z0-9_] names; `/start-session` cannot be registered. */
-const BOT_COMMANDS = [
+export const BOT_COMMANDS = [
 	{ command: "sessions", description: "List live/recent sessions" },
 	{ command: "observe", description: "Bounded status for one session" },
 	{ command: "presets", description: "List session presets" },
 	{ command: "stop", description: "Request a graceful stop (confirm required)" },
+	{ command: "help", description: "Show the command set" },
+	{ command: "start", description: "Onboarding" },
+];
+
+export const RPC_BOT_COMMANDS = [
+	{ command: "attach", description: "Attach this chat to the RPC session" },
+	{ command: "detach", description: "Detach (session keeps running)" },
+	{ command: "status", description: "Show attachment/session status" },
+	{ command: "abort", description: "Abort the current turn" },
 	{ command: "help", description: "Show the command set" },
 	{ command: "start", description: "Onboarding" },
 ];
@@ -100,6 +111,7 @@ export class TelegramBotApiTransport implements TelegramTransport {
 	private readonly fetchImpl: typeof fetch;
 	private readonly enableEdit: boolean;
 	private readonly registerCommands: boolean;
+	private readonly botCommands?: Array<{ command: string; description: string }>;
 	private running = false;
 	private initialized = false;
 	private offset = 0;
@@ -111,6 +123,7 @@ export class TelegramBotApiTransport implements TelegramTransport {
 		this.fetchImpl = options.fetchImpl ?? fetch;
 		this.enableEdit = options.enableEditMessageText ?? false;
 		this.registerCommands = options.registerBotCommands ?? true;
+		this.botCommands = options.botCommands;
 	}
 
 	async run(onUpdate: (update: IncomingUpdate) => Promise<OutgoingReply | string>): Promise<void> {
@@ -149,7 +162,7 @@ export class TelegramBotApiTransport implements TelegramTransport {
 		if (this.initialized) return;
 		this.initialized = true;
 		if (!this.registerCommands) return;
-		await this.post("setMyCommands", { commands: BOT_COMMANDS });
+		await this.post("setMyCommands", { commands: this.botCommands ?? BOT_COMMANDS });
 	}
 
 	private async process(

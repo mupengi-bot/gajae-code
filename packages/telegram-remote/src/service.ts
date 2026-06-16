@@ -10,7 +10,7 @@ import { RpcAttachmentStore } from "./rpc-attachment-store";
 import { RpcBackend } from "./rpc-backend";
 import { TelegramRpcGateway } from "./rpc-gateway";
 import { SubscriptionStore } from "./subscriptions";
-import { TelegramBotApiTransport } from "./telegram";
+import { RPC_BOT_COMMANDS, TelegramBotApiTransport } from "./telegram";
 import type { CoordinatorClient, RpcBackendPort, TelegramTransport } from "./types";
 
 /** Optional injection points for local runs and integration tests. */
@@ -30,6 +30,7 @@ export async function runService(config: ServiceConfig, options: RunServiceOptio
 			pollTimeoutSec: config.pollTimeoutSec,
 			enableEditMessageText: config.enableEditMessageText,
 			registerBotCommands: config.registerBotCommands,
+			botCommands: config.backend === "rpc" ? RPC_BOT_COMMANDS : undefined,
 		});
 	if (config.backend === "rpc") {
 		if (!config.rpc) throw new Error("telegram_remote_rpc_config_missing");
@@ -42,7 +43,12 @@ export async function runService(config: ServiceConfig, options: RunServiceOptio
 				defaultSocketPath: config.rpc.socketPath,
 				allowAttachSocketArg: config.rpc.allowAttachSocketArg,
 			},
-			{ backend: rpcBackend, attachments, outbound: typeof transport.send === "function" ? transport : undefined },
+			{
+				backend: rpcBackend,
+				attachments,
+				outbound: typeof transport.send === "function" ? transport : undefined,
+				livenessMs: config.rpc.livenessMs,
+			},
 		);
 		await gateway.restorePersistedAttachment();
 		const shutdown = (): void => {

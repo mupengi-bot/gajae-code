@@ -143,6 +143,8 @@ export interface RpcBackendPort {
 	respondExtensionUi?(response: unknown): void;
 	respondGate?(gateId: string, answer: unknown, idempotencyKey?: string): Promise<unknown>;
 	getPendingWorkflowGates?(): Promise<unknown[]>;
+	getMessages?(): Promise<unknown[]>;
+	getLastAssistantText?(): Promise<string | null>;
 	onExtensionUiRequest?(listener: (request: unknown) => void): () => void;
 	onWorkflowGate?(listener: (gate: unknown) => void): () => void;
 	onEvents?(listener: (event: { type: string; [key: string]: unknown }) => void): () => void;

@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@gajae-code/agent-core";
 import { RpcClient } from "@gajae-code/coding-agent";
 import type {
 	RpcExtensionUIRequest,
@@ -111,6 +112,14 @@ export class RpcBackend implements RpcBackendPort {
 		return (this.#requireClient() as RpcClientWithPr4).getPendingWorkflowGates();
 	}
 
+	async getMessages(): Promise<AgentMessage[]> {
+		return this.#requireClient().getMessages();
+	}
+
+	async getLastAssistantText(): Promise<string | null> {
+		return this.#requireClient().getLastAssistantText();
+	}
+
 	onEvents(listener: (event: RpcLifecycleEvent) => void): () => void {
 		this.#eventListeners.add(listener);
 		return () => this.#eventListeners.delete(listener);
@@ -189,7 +198,9 @@ export class FakeRpcBackend implements RpcBackendPort {
 			| "abortAndPrompt"
 			| "respondExtensionUi"
 			| "respondGate"
-			| "getPendingWorkflowGates";
+			| "getPendingWorkflowGates"
+			| "getMessages"
+			| "getLastAssistantText";
 		args?: unknown;
 	}> = [];
 	state: RpcBackendState;
@@ -197,7 +208,10 @@ export class FakeRpcBackend implements RpcBackendPort {
 	commandIgnoredListeners = new Set<(error: Error) => void>();
 	extensionUiListeners = new Set<(request: RpcExtensionUIRequest) => void>();
 	workflowGateListeners = new Set<(gate: RpcWorkflowGate) => void>();
+	eventListeners = new Set<(event: RpcLifecycleEvent) => void>();
 	pendingWorkflowGates: RpcWorkflowGate[] = [];
+	messages: AgentMessage[] = [];
+	lastAssistantText: string | null = null;
 
 	constructor(socketPath = "/tmp/gjc-rpc.sock") {
 		this.state = { connected: false, socketPath };
@@ -254,6 +268,16 @@ export class FakeRpcBackend implements RpcBackendPort {
 		return [...this.pendingWorkflowGates];
 	}
 
+	async getMessages(): Promise<AgentMessage[]> {
+		this.calls.push({ method: "getMessages" });
+		return [...this.messages];
+	}
+
+	async getLastAssistantText(): Promise<string | null> {
+		this.calls.push({ method: "getLastAssistantText" });
+		return this.lastAssistantText;
+	}
+
 	onExtensionUiRequest(listener: (request: RpcExtensionUIRequest) => void): () => void {
 		this.extensionUiListeners.add(listener);
 		return () => this.extensionUiListeners.delete(listener);
@@ -264,12 +288,21 @@ export class FakeRpcBackend implements RpcBackendPort {
 		return () => this.workflowGateListeners.delete(listener);
 	}
 
+	onEvents(listener: (event: RpcLifecycleEvent) => void): () => void {
+		this.eventListeners.add(listener);
+		return () => this.eventListeners.delete(listener);
+	}
+
 	emitExtensionUiRequest(request: RpcExtensionUIRequest): void {
 		for (const listener of this.extensionUiListeners) listener(request);
 	}
 
 	emitWorkflowGate(gate: RpcWorkflowGate): void {
 		for (const listener of this.workflowGateListeners) listener(gate);
+	}
+
+	emitEvent(event: RpcLifecycleEvent): void {
+		for (const listener of this.eventListeners) listener(event);
 	}
 
 	onTransportError(listener: (error: Error) => void): () => void {

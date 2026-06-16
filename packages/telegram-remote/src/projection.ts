@@ -320,6 +320,39 @@ export function escapeHtml(value: string): string {
 	return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+export function chunkForDelivery(text: string, maxLen = 4096): string[] {
+	if (text.trim().length === 0) return [];
+	const chunks: string[] = [];
+	let rawChunk = "";
+	let escapedLen = 0;
+	for (const char of text) {
+		const escaped = escapeHtml(char);
+		if (rawChunk && escapedLen + escaped.length > maxLen) {
+			chunks.push(escapeHtml(rawChunk));
+			rawChunk = "";
+			escapedLen = 0;
+		}
+		rawChunk += char;
+		escapedLen += escaped.length;
+	}
+	if (rawChunk) chunks.push(escapeHtml(rawChunk));
+	return chunks;
+}
+
+export function formatExitAlert(): string {
+	return "RPC session exited. Attachment marked stale.";
+}
+
+export function formatLivenessAlert(): string {
+	return "RPC session timed out. Attachment marked stale.";
+}
+
+export function formatSendFailure(retryAfterMs?: number): string {
+	return typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs) && retryAfterMs > 0
+		? `Final answer delivery paused; retry after ${Math.ceil(retryAfterMs / 1000)}s.`
+		: "Final answer delivery paused; retry later.";
+}
+
 /** Read the exact raw coordinator session_id from a record (never truncated). */
 export function readSessionId(record: RawRecord): string | null {
 	return readString(record, "session_id");

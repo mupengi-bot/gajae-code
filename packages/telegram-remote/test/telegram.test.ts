@@ -73,6 +73,16 @@ describe("TelegramBotApiTransport", () => {
 		expect(names.some(n => n.includes("-"))).toBe(false);
 	});
 
+	test("registers custom botCommands when provided", async () => {
+		const botCommands = [
+			{ command: "attach", description: "Attach this chat to the RPC session" },
+			{ command: "detach", description: "Detach (session keeps running)" },
+		];
+		const calls = await runOnce([], async () => "", { registerBotCommands: true, botCommands });
+		const setCommands = calls.find(c => c.method === "setMyCommands");
+		expect(setCommands?.body.commands).toEqual(botCommands);
+	});
+
 	test("sends a chat reply with parse_mode and reply_markup (callbackData -> callback_data)", async () => {
 		const calls = await runOnce([messageUpdate], async () => ({
 			kind: "chat",

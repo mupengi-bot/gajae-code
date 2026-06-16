@@ -2,6 +2,7 @@ import { parseCommand } from "./commands";
 import { MESSAGES } from "./messages";
 import type { RpcAttachmentStore } from "./rpc-attachment-store";
 import { type RpcControlSignal, RpcControlStateMachine } from "./rpc-control-state";
+import { RpcEventBridge } from "./rpc-event-bridge";
 import { extensionUiResponseFromToken, RpcUiBridge } from "./rpc-ui-bridge";
 import { CallbackTokenStore } from "./tokens";
 import type {
@@ -28,6 +29,7 @@ export interface RpcGatewayDeps {
 	tokens?: CallbackTokenStore;
 	rpcUiTtlMs?: number;
 	outbound?: Pick<TelegramTransport, "send">;
+	livenessMs?: number;
 }
 
 export class TelegramRpcGateway {
@@ -42,7 +44,9 @@ export class TelegramRpcGateway {
 	readonly #tokens: CallbackTokenStore;
 	readonly #rpcUiTtlMs: number;
 	#uiBridge: RpcUiBridge | null = null;
+	#eventBridge: RpcEventBridge | null = null;
 	readonly #outbound?: Pick<TelegramTransport, "send">;
+	readonly #livenessMs: number;
 
 	constructor(policy: RpcGatewayPolicy, deps: RpcGatewayDeps) {
 		this.#policy = policy;
@@ -52,6 +56,7 @@ export class TelegramRpcGateway {
 		this.#tokens = deps.tokens ?? new CallbackTokenStore({ now: this.#now });
 		this.#rpcUiTtlMs = deps.rpcUiTtlMs ?? 5 * 60 * 1000;
 		this.#outbound = deps.outbound;
+		this.#livenessMs = deps.livenessMs ?? 60_000;
 		this.#control = new RpcControlStateMachine({
 			backend: this.#backend,
 			onSignal: signal => {
@@ -71,11 +76,16 @@ export class TelegramRpcGateway {
 	async restorePersistedAttachment(): Promise<void> {
 		const attachment = this.#attachments.get();
 		if (!attachment || attachment.stale) return;
+		if (!this.isAuthorized(attachment.userId, attachment.chatId)) return;
 		await this.#backend.connect(attachment.socketPath);
 		this.#uiBridge?.stop();
+		this.#eventBridge?.stop();
 		this.#uiBridge = this.createUiBridge(attachment);
 		this.#uiBridge.start();
+		this.#eventBridge = this.createEventBridge(attachment);
+		this.#eventBridge.start();
 		await this.#uiBridge.replayPendingWorkflowGates();
+		await this.#eventBridge.resync();
 		await this.updateAttachmentState();
 	}
 
@@ -94,6 +104,8 @@ export class TelegramRpcGateway {
 			case "attach":
 				return this.attach(message, command.socketPath);
 			case "detach":
+				this.#eventBridge?.stop();
+				this.#eventBridge = null;
 				await this.#attachments.clear();
 				return this.chat("Detached. Session keeps running.");
 			case "status":
@@ -129,8 +141,11 @@ export class TelegramRpcGateway {
 		};
 		await this.#attachments.set(attachment);
 		this.#uiBridge?.stop();
+		this.#eventBridge?.stop();
 		this.#uiBridge = this.createUiBridge(attachment);
 		this.#uiBridge.start();
+		this.#eventBridge = this.createEventBridge(attachment);
+		this.#eventBridge.start();
 		await this.#control.attach();
 		await this.#uiBridge.replayPendingWorkflowGates();
 		await this.#attachments.set({ ...attachment, controllerState: this.#control.state, updatedAt: this.#now() });
@@ -273,6 +288,17 @@ export class TelegramRpcGateway {
 			onMessage: async reply => {
 				await this.#outbound?.send?.({ chatId: attachment.chatId, reply });
 			},
+		});
+	}
+
+	private createEventBridge(attachment: AttachmentRecord): RpcEventBridge {
+		return new RpcEventBridge({
+			backend: this.#backend,
+			attachments: this.#attachments,
+			binding: { chatId: attachment.chatId, userId: attachment.userId },
+			outbound: this.#outbound?.send ? { send: message => this.#outbound!.send!(message) } : undefined,
+			now: this.#now,
+			livenessMs: this.#livenessMs,
 		});
 	}
 

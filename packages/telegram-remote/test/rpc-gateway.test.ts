@@ -231,4 +231,90 @@ describe("TelegramRpcGateway", () => {
 		expect(reply).toEqual({ kind: "chat", text: "Reconnecting to RPC session; input is queued." });
 		expect(attachments.get()?.controllerState).toBe("reconnecting");
 	});
+	test("restorePersistedAttachment resumes persisted final-answer chunks without manual attach", async () => {
+		const gateway = await makeGateway();
+		const sent: Array<{ chatId: string; reply: { kind: string; text: string } }> = [];
+		const resendGateway = new TelegramRpcGateway(
+			{
+				allowedUserIds: new Set(["100"]),
+				allowedChatIds: new Set(["900"]),
+				defaultSocketPath: "/tmp/gjc.sock",
+				allowAttachSocketArg: false,
+			},
+			{
+				backend,
+				attachments,
+				now: () => clock,
+				outbound: {
+					send: async message => {
+						sent.push(message as { chatId: string; reply: { kind: string; text: string } });
+						return { ok: true };
+					},
+				},
+			},
+		);
+		void gateway;
+		const raw = `${"x".repeat(4096)}tail`;
+		backend.messages = [{ role: "assistant", content: raw, index: 4, timestamp: "t4" } as never];
+		await attachments.set({
+			chatId: "900",
+			userId: "100",
+			socketPath: "/tmp/gjc.sock",
+			stale: false,
+			pendingGateIds: [],
+			deliveryIdentities: [],
+			chunkProgress: {
+				deliveryId: "message:4::t4:27805d0034d129596b35ac25fa14eb81",
+				nextChunkIndex: 1,
+				chunkCount: 2,
+			},
+			updatedAt: clock,
+		});
+
+		await resendGateway.restorePersistedAttachment();
+
+		expect(sent.map(item => item.reply.text)).toEqual(["tail"]);
+		expect(attachments.get()?.chunkProgress).toBeUndefined();
+		expect(attachments.get()?.deliveryIdentities).toHaveLength(1);
+	});
+
+	test("restorePersistedAttachment fails closed when persisted binding is no longer authorized", async () => {
+		const gateway = await makeGateway({ allowedUserIds: new Set(["100"]), allowedChatIds: new Set(["900"]) });
+		const sent: Array<{ chatId: string; reply: { kind: string; text: string } }> = [];
+		const restoreGateway = new TelegramRpcGateway(
+			{
+				allowedUserIds: new Set(["100"]),
+				allowedChatIds: new Set(["900"]),
+				defaultSocketPath: "/tmp/gjc.sock",
+				allowAttachSocketArg: false,
+			},
+			{
+				backend,
+				attachments,
+				now: () => clock,
+				outbound: {
+					send: async message => {
+						sent.push(message as { chatId: string; reply: { kind: string; text: string } });
+						return { ok: true };
+					},
+				},
+			},
+		);
+		void gateway;
+		await attachments.set({
+			chatId: "not-allowed-chat",
+			userId: "not-allowed-user",
+			socketPath: "/tmp/restored.sock",
+			stale: false,
+			pendingGateIds: ["gate-1"],
+			deliveryIdentities: [],
+			updatedAt: clock,
+		});
+
+		await restoreGateway.restorePersistedAttachment();
+
+		expect(backend.connectCalls).toBe(0);
+		expect(sent).toHaveLength(0);
+		expect(backend.countOf("getPendingWorkflowGates")).toBe(0);
+	});
 });
