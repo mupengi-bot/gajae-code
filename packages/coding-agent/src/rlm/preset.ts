@@ -7,11 +7,30 @@ import rlmResearchPrompt from "../prompts/system/rlm-research.md" with { type: "
 import type { RlmDataContext } from "./data-context";
 
 /**
- * Tools the model may use in RLM mode. `python` is the RLM research execution
- * tool; `read` and `web_search` are the existing built-ins. Everything else
- * (bash, edit, write, goal, task, skill, browser, eval-js, ...) is excluded.
+ * tool; `read` and `web_search` are the existing built-ins. `bash` is exposed
+ * through the read-only restriction profile below for inspection commands only,
+ * and `goal` is required so RLM sessions cannot finish without explicit goal
+ * completion. Everything else (edit, write, task, skill, browser, eval-js, ...) is excluded.
  */
-export const RLM_TOOL_ALLOWLIST: readonly string[] = ["python", "read", "web_search", "search_tool_bm25"];
+export const RLM_READ_ONLY_BASH_PREFIXES: readonly string[] = [
+	"grep",
+	"rg",
+	"tree",
+	"ls",
+	"pwd",
+	"wc",
+	"du",
+	"file",
+	"stat",
+];
+export const RLM_TOOL_ALLOWLIST: readonly string[] = [
+	"python",
+	"read",
+	"web_search",
+	"search_tool_bm25",
+	"bash",
+	"goal",
+];
 
 export function isRlmToolAllowed(name: string): boolean {
 	return RLM_TOOL_ALLOWLIST.includes(name.toLowerCase());
