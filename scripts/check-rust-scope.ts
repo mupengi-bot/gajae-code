@@ -44,6 +44,11 @@ const RUST_SCOPE_ALLOWLIST: readonly RustScopeEntry[] = [
 		rationale: "Native filesystem isolation backends such as clone, reflink, overlay, and ProjFS.",
 	},
 	{
+		dir: "crates/pi-harness-core",
+		packageName: "pi-harness-core",
+		rationale: "Native run-ledger/scoring core for deterministic agent-loop experiment accounting and CLI-safe file writes.",
+	},
+	{
 		dir: "crates/brush-core-vendored",
 		packageName: "brush-core",
 		rationale: "Vendored Rust shell runtime dependency for the native shell boundary.",

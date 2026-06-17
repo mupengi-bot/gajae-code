@@ -52,6 +52,56 @@ function writeJson(value: unknown): void {
 	process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
+function repoRootPath(): string {
+	return path.resolve(import.meta.dir, "../../../..");
+}
+
+function requiredFlag(value: string | undefined, name: string): string {
+	if (value === undefined || value.trim() === "") throw new Error(`missing_required_flag:${name}`);
+	return value;
+}
+
+function optionalFlag(value: string | undefined): string | undefined {
+	return value === undefined || value.trim() === "" ? undefined : value;
+}
+
+function addFlag(argv: string[], name: string, value: string | undefined): void {
+	const normalized = optionalFlag(value);
+	if (normalized === undefined) return;
+	argv.push(name, normalized);
+}
+
+function runHarnessCore(argv: string[]): void {
+	const binaryOverride = optionalFlag(process.env.GJC_HARNESS_CORE_BINARY);
+	const debugBinary = path.join(
+		repoRootPath(),
+		"target",
+		"debug",
+		process.platform === "win32" ? "pi-harness-core.exe" : "pi-harness-core",
+	);
+	const releaseBinary = path.join(
+		repoRootPath(),
+		"target",
+		"release",
+		process.platform === "win32" ? "pi-harness-core.exe" : "pi-harness-core",
+	);
+	const command = binaryOverride
+		? [binaryOverride, ...argv]
+		: existsSync(debugBinary)
+			? [debugBinary, ...argv]
+			: existsSync(releaseBinary)
+				? [releaseBinary, ...argv]
+				: ["cargo", "run", "-q", "-p", "pi-harness-core", "--", ...argv];
+	const proc = Bun.spawnSync(command, {
+		cwd: repoRootPath(),
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	if (proc.stdout.length > 0) process.stdout.write(proc.stdout);
+	if (proc.stderr.length > 0) process.stderr.write(proc.stderr);
+	if (proc.exitCode !== 0) process.exitCode = proc.exitCode;
+}
+
 function nowIso(): string {
 	return new Date().toISOString();
 }
@@ -503,8 +553,13 @@ export default class Harness extends Command {
 
 	static args = {
 		verb: Args.string({
-			description: "start|preflight|submit|observe|classify|recover|validate|finalize|retire|events|monitor|operate",
+			description:
+				"start|preflight|submit|observe|classify|recover|validate|finalize|retire|events|monitor|operate|run-ledger",
 			required: true,
+		}),
+		action: Args.string({
+			description: "run-ledger action: init|attempt|score|propose",
+			required: false,
 		}),
 	};
 
@@ -518,6 +573,22 @@ export default class Harness extends Command {
 		"receipt-spool-dir": Flags.string({
 			description: "Append persisted ReceiptEnvelope records to spool.jsonl under this directory",
 		}),
+		goal: Flags.string({ description: "run-ledger init goal text" }),
+		workspace: Flags.string({ description: "Workspace for run-ledger files", default: "." }),
+		run: Flags.string({ description: "Run ledger id" }),
+		label: Flags.string({ description: "Attempt label" }),
+		notes: Flags.string({ description: "Attempt notes" }),
+		attempt: Flags.string({ description: "Attempt id" }),
+		build: Flags.string({ description: "Attempt build score 0..1" }),
+		tests: Flags.string({ description: "Attempt tests score 0..1" }),
+		lint: Flags.string({ description: "Attempt lint score 0..1" }),
+		checks: Flags.string({ description: "Attempt additional checks score 0..1" }),
+		screenshot: Flags.string({ description: "Attempt visual verification score 0..1" }),
+		review: Flags.string({ description: "Attempt review score 0..1" }),
+		risk: Flags.string({ description: "Attempt risk score 0..1, higher is riskier" }),
+		"diff-size": Flags.string({ description: "Attempt diff-size score 0..1, higher is larger" }),
+		title: Flags.string({ description: "Proposal title" }),
+		body: Flags.string({ description: "Proposal body" }),
 	};
 
 	static examples = [
@@ -525,11 +596,14 @@ export default class Harness extends Command {
 		"gjc harness observe --session <id>",
 		`gjc harness classify --input '{"observation":{"ownerLive":false,"gitDelta":"dirty","risk":"vanished-dirty"}}'`,
 		"gjc harness events --session <id> --follow",
+		`gjc harness run-ledger init --goal "Improve dashboard"`,
+		`gjc harness run-ledger score --run <id> --attempt <id> --build 1 --tests 1 --lint 1 --risk 0 --diff-size 0.2`,
 	];
 
 	async run(): Promise<void> {
 		const { args, flags } = await this.parse(Harness);
 		const verb = String(args.verb);
+		const action = args.action === undefined ? undefined : String(args.action);
 		let root = resolveHarnessRoot();
 		try {
 			const receiptSpoolDir = flags["receipt-spool-dir"];
@@ -538,6 +612,7 @@ export default class Harness extends Command {
 				process.env[RECEIPT_SPOOL_DIR_ENV] = path.resolve(receiptSpoolDir.trim());
 			}
 			const input = parseInput(flags.input);
+			if (verb === "run-ledger") return this.#runLedger(action, flags);
 			const promptFile = flags["prompt-file"];
 			if (promptFile !== undefined) {
 				if (verb !== "submit") throw new Error("prompt_file_only_supported_for_submit");
@@ -581,6 +656,76 @@ export default class Harness extends Command {
 		} catch (error) {
 			writeJson({ ok: false, error: error instanceof Error ? error.message : String(error), verb });
 			process.exitCode = 1;
+		}
+	}
+
+	#runLedger(action: string | undefined, flags: Record<string, string | boolean | undefined>): void {
+		const workspace = path.resolve(typeof flags.workspace === "string" ? flags.workspace : ".");
+		switch (action) {
+			case "init": {
+				const argv = [
+					"init-run",
+					"--goal",
+					requiredFlag(typeof flags.goal === "string" ? flags.goal : undefined, "goal"),
+				];
+				addFlag(argv, "--workspace", workspace);
+				addFlag(argv, "--run", typeof flags.run === "string" ? flags.run : undefined);
+				runHarnessCore(argv);
+				return;
+			}
+			case "attempt": {
+				const argv = [
+					"add-attempt",
+					"--run",
+					requiredFlag(typeof flags.run === "string" ? flags.run : undefined, "run"),
+					"--label",
+					requiredFlag(typeof flags.label === "string" ? flags.label : undefined, "label"),
+				];
+				addFlag(argv, "--workspace", workspace);
+				addFlag(argv, "--notes", typeof flags.notes === "string" ? flags.notes : undefined);
+				addFlag(argv, "--attempt", typeof flags.attempt === "string" ? flags.attempt : undefined);
+				runHarnessCore(argv);
+				return;
+			}
+			case "score": {
+				const argv = [
+					"score-attempt",
+					"--run",
+					requiredFlag(typeof flags.run === "string" ? flags.run : undefined, "run"),
+					"--attempt",
+					requiredFlag(typeof flags.attempt === "string" ? flags.attempt : undefined, "attempt"),
+					"--build",
+					requiredFlag(typeof flags.build === "string" ? flags.build : undefined, "build"),
+					"--tests",
+					requiredFlag(typeof flags.tests === "string" ? flags.tests : undefined, "tests"),
+					"--lint",
+					requiredFlag(typeof flags.lint === "string" ? flags.lint : undefined, "lint"),
+				];
+				addFlag(argv, "--workspace", workspace);
+				addFlag(argv, "--checks", typeof flags.checks === "string" ? flags.checks : undefined);
+				addFlag(argv, "--screenshot", typeof flags.screenshot === "string" ? flags.screenshot : undefined);
+				addFlag(argv, "--review", typeof flags.review === "string" ? flags.review : undefined);
+				addFlag(argv, "--risk", typeof flags.risk === "string" ? flags.risk : undefined);
+				addFlag(argv, "--diff-size", typeof flags["diff-size"] === "string" ? flags["diff-size"] : undefined);
+				runHarnessCore(argv);
+				return;
+			}
+			case "propose": {
+				const argv = [
+					"propose",
+					"--run",
+					requiredFlag(typeof flags.run === "string" ? flags.run : undefined, "run"),
+					"--title",
+					requiredFlag(typeof flags.title === "string" ? flags.title : undefined, "title"),
+					"--body",
+					requiredFlag(typeof flags.body === "string" ? flags.body : undefined, "body"),
+				];
+				addFlag(argv, "--workspace", workspace);
+				runHarnessCore(argv);
+				return;
+			}
+			default:
+				throw new Error(`unknown_run_ledger_action:${action ?? "(missing)"}`);
 		}
 	}
 

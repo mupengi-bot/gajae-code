@@ -2397,6 +2397,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-harness-core"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pi-iso"
 version = "0.5.3"
 dependencies = [
