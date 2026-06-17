@@ -4,6 +4,11 @@
 
 ### Added
 
+- Managed-service examples for Telegram Remote deployments: Linux systemd user units for coordinator
+  and RPC modes, macOS launchd parity examples with safe env-loading wrappers, service env templates,
+  and docs for same-UID RPC sockets, token handling, linger, socket readiness, restart behavior,
+  verification, and uninstall.
+
 - Rich messaging (optional, default on via `GJC_TELEGRAM_REMOTE_ENABLE_RICH`): HTML formatting and
   inline keyboards as a presentation + alternate-entry layer over the same Coordinator MCP surface.
   - Inline **Observe** / **Stop** / **Refresh** / **Confirm stop** / **Cancel** buttons on
