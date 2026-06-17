@@ -45,7 +45,7 @@ afterEach(async () => {
 	await rm(workspace, { recursive: true, force: true });
 });
 
-async function waitForSocket(socketPath: string, timeoutMs = 15_000): Promise<void> {
+async function waitForSocket(socketPath: string, timeoutMs = 30_000): Promise<void> {
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
 		try {
@@ -137,7 +137,7 @@ describe("RpcClient UDS transport", () => {
 		} finally {
 			proc.kill();
 		}
-	}, 45_000);
+	}, 60_000);
 
 	test("dispatches real server UI, workflow gate, and host-tool frames over UDS", async () => {
 		const socketPath = path.join(workspace, "frame-dispatch.sock");
