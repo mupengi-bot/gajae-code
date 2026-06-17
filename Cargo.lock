@@ -2398,7 +2398,7 @@ dependencies = [
 
 [[package]]
 name = "pi-harness-core"
-version = "0.5.0"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "clap",
